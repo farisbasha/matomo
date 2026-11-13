@@ -34,6 +34,7 @@ The Product Changelog at **[matomo.org/changelog](https://matomo.org/changelog)*
 
 ### Other changes
 * The tracking endpoint now answers server errors, such as a `TypeError` or a failing `Tracker.newHandler` listener, with `500` and logs them, and no longer writes `4xx` rejections to PHP's error log.
+* An exception implementing `Piwik\Http\HttpCodeException` thrown while tracking is now answered with its status code (`400`, `401`, `403`, `404`, `429` or `503`; other `4xx` codes with `400`) instead of `500`; with a `4xx` code it is counted as invalid in a bulk request.
 * The JavaScript `AjaxHelper` now handles an API error answered with a 4xx status like one answered with status `200`, unless an error callback set via `setErrorCallback()` handles it.
 
 ## Matomo 6.0.0
