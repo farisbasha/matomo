@@ -240,6 +240,8 @@ class Transitions extends \Piwik\Plugin
         $translationKeys[] = 'Transitions_PreprocessedPagesAddingDisabled';
         $translationKeys[] = 'Transitions_DateTimeUtc';
         $translationKeys[] = 'Transitions_PreprocessedPageAlreadySelected';
+        $translationKeys[] = 'Transitions_PreprocessedPageInvalidUrl';
+        $translationKeys[] = 'Transitions_PreprocessedPageUrlTooLong';
         $translationKeys[] = 'Transitions_PreprocessedPageDuplicateHelp';
         $translationKeys[] = 'Transitions_PreprocessedPagesRebuildHint';
         $translationKeys[] = 'Transitions_PreprocessedPagesRebuildHintOneMonth';
@@ -254,7 +256,6 @@ class Transitions extends \Piwik\Plugin
         $translationKeys[] = 'Actions_ColumnPageURL';
         $translationKeys[] = 'General_ColumnPageviews';
         $translationKeys[] = 'General_Remove';
-        $translationKeys[] = 'General_Cancel';
         $translationKeys[] = 'General_Unknown';
     }
 
