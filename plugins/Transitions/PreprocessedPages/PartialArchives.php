@@ -197,6 +197,31 @@ final class PartialArchives
     }
 
     /**
+     * Tells whether one of the periods is queued for, or in, archiving for all plugins or for this plugin.
+     *
+     * @param list<Period> $periods
+     */
+    public function isAnyQueuedForArchiving(int $idSite, array $periods, Segment $segment): bool
+    {
+        if (empty($periods)) {
+            return false;
+        }
+
+        $bind = [$idSite, Rules::getDoneFlagArchiveContainsAllPlugins($segment), Rules::getDoneFlagArchiveContainsOnePlugin($segment, 'Transitions')];
+        $periodConditions = [];
+        foreach ($periods as $period) {
+            $periodConditions[] = '(period = ? AND date1 = ? AND date2 = ?)';
+            array_push($bind, $period->getId(), $period->getDateStart()->toString(), $period->getDateEnd()->toString());
+        }
+
+        return (bool) Db::fetchOne(
+            'SELECT 1 FROM `' . Common::prefixTable('archive_invalidations') . '` WHERE idsite = ? AND name IN (?, ?)'
+            . ' AND (report IS NULL OR LENGTH(report) = 0) AND (' . implode(' OR ', $periodConditions) . ') LIMIT 1',
+            $bind
+        );
+    }
+
+    /**
      * Deletes the page's older partial archives of the day and segment, which hold only the page's records, once a
      * newer one is written.
      */

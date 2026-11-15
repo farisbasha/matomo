@@ -769,6 +769,88 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         }
     }
 
+    /**
+     * A page's partial archive of a period whose archive for all pages is marked is marked too, as the other pages are
+     * still read from that archive.
+     */
+    public function testAPagesPartialArchiveOfAMarkedPeriodDoesNotHideTheMarkerOfTheOtherPages(): void
+    {
+        $this->archiveAllPlugins(self::DAY);
+        $idPage = $this->selectPage(self::PAGE_URL);
+        $otherIdPage = $this->selectPage(self::OTHER_PAGE_URL);
+        foreach ([self::PAGE_URL, self::OTHER_PAGE_URL] as $url) {
+            self::assertSame(1, $this->request('day', self::DAY, $url)['preprocessed']);
+        }
+        StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [Date::factory(self::DAY)], 'day', null, false, false, 'Transitions');
+
+        // the week for all plugins is summed from the marked day, which is then archived again
+        $this->archiveAllPlugins(self::DAY, 'week');
+        $this->archivePluginAsCoreArchive('day', self::DAY);
+        $week = PeriodFactory::build('week', self::DAY);
+        $reader = StaticContainer::get(StoredRecordsReader::class);
+        self::assertSame([$week->getRangeString()], $reader->getCoverageAndInvalidated(1, [$week], new Segment('', [1]), $otherIdPage)['invalidated']);
+
+        $this->rebuildAsCoreArchive($idPage, 'week', self::DAY);
+
+        self::assertSame([$week->getRangeString()], $reader->getCoverageAndInvalidated(1, [$week], new Segment('', [1]), $otherIdPage)['invalidated']);
+    }
+
+    /**
+     * While the catch-up is pending, longer periods are marked, as their subperiods may hold partial archives it will
+     * mark, and queued to be archived again.
+     */
+    public function testALongerPeriodBuiltWhileTheCatchUpIsPendingIsMarkedAndQueued(): void
+    {
+        $idPage = $this->selectPage(self::PAGE_URL);
+        self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
+        // nothing for the catch-up to mark
+        Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
+
+        PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
+        $this->rebuildAsCoreArchive($idPage, 'week', self::DAY);
+        (new Tasks())->catchUpOnInvalidatedArchives();
+
+        self::assertSame(1, $this->countPartialArchives('2010-03-01', Week::PERIOD_ID, true));
+        self::assertSame(1, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+
+        // as core:archive processes the week's invalidation
+        $this->archivePluginAsCoreArchive('week', self::DAY);
+        self::assertSame(0, $this->countMarkedArchives(Week::PERIOD_ID));
+    }
+
+    /**
+     * A longer period summed from a marked day that won't be archived again isn't queued again with every build.
+     */
+    public function testALongerPeriodIsQueuedOnlyIfItsMarkedSubperiodIsQueued(): void
+    {
+        $idPage = $this->selectPage(self::PAGE_URL);
+        self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
+        StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [Date::factory(self::DAY)], 'day', null, false, false, 'Transitions');
+        // as when core:archive dropped the queued invalidations of the plugin while it was deactivated
+        Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
+
+        $this->rebuildAsCoreArchive($idPage, 'week', self::DAY);
+
+        self::assertSame(1, $this->countPartialArchives('2010-03-01', Week::PERIOD_ID, true));
+        self::assertSame(0, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+    }
+
+    private function countMarkedArchives(int $periodId): int
+    {
+        return (int) Db::fetchOne(
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE idsite = 1 AND period = ? AND name = ? AND value > 0',
+            [$periodId, Records::INVALIDATED]
+        );
+    }
+
+    private function countQueuedPluginInvalidations(int $periodId, string $date1): int
+    {
+        return (int) Db::fetchOne(
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_invalidations') . " WHERE idsite = 1 AND period = ? AND date1 = ? AND name = 'done.Transitions' AND report IS NULL AND status = 0",
+            [$periodId, $date1]
+        );
+    }
+
     private function getPeriodStart(string $period): string
     {
         return PeriodFactory::build($period, self::DAY)->getDateStart()->toString();
