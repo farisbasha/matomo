@@ -70,8 +70,9 @@ describe("TransitionsPreprocessedPages", function () {
     async function clickDialogButton(text)
     {
         await page.waitForSelector('.modal.open', { visible: true });
+        // a native click: materialize closes the dialog from a listener jQuery's .click() skips on links
         await page.evaluate((text) => {
-            $('.modal.open .modal-footer a:contains(' + text + ')').click();
+            $('.modal.open .modal-footer a:contains(' + text + ')')[0].click();
         }, text);
         await page.waitForFunction(() => !document.querySelector('.modal.open'));
     }
