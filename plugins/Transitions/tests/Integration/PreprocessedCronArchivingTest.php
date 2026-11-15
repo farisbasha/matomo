@@ -419,6 +419,22 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
         self::assertGreaterThan(0, $this->getStoredNumeric(1, 'done.Transitions', Records::getRecordName($idPage, Records::PAGEVIEWS), 'month'));
     }
 
+    /**
+     * Without a previous run's time, as after an upgrade, no single report is deferred, so the queued ones of other
+     * plugins aren't held back to the end of the run.
+     */
+    public function testTheFirstRunAfterAnUpgradeDefersNoSingleReport(): void
+    {
+        Option::delete(CronArchive::OPTION_QUEUE_PROCESSING_STARTED);
+        StaticContainer::get(ArchiveInvalidator::class)->scheduleReArchiving([1, 2], 'Actions', 'Actions_hits', self::getFirstDay());
+
+        $output = self::runCoreArchive();
+
+        self::assertStringNotContainsString('Start processing single report archives', $output);
+        self::assertSame(0, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_invalidations') . " WHERE report IS NOT NULL AND report <> ''"));
+        self::assertNotNull(Option::get(CronArchive::OPTION_QUEUE_PROCESSING_STARTED));
+    }
+
     private static function getFirstDay(): Date
     {
         return Date::today()->subMonth(2)->setDay(5);

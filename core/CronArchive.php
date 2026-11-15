@@ -420,10 +420,12 @@ class CronArchive
             $this->invalidator->applyScheduledReArchiving();
         });
 
-        // single report invalidations queued up to the time the previous run got here were deferred by it already
+        // single report invalidations queued since the time the previous run got here are deferred to the end of the
+        // run; without a previous run, as after an upgrade, none are
+        $now = Date::now()->getDatetime();
         Option::clearCachedOption(self::OPTION_QUEUE_PROCESSING_STARTED);
         $previousQueueProcessingStart = Option::get(self::OPTION_QUEUE_PROCESSING_STARTED);
-        Option::set(self::OPTION_QUEUE_PROCESSING_STARTED, Date::now()->getDatetime());
+        Option::set(self::OPTION_QUEUE_PROCESSING_STARTED, $now);
 
         $failedJobs = $this->model->resetFailedArchivingJobs();
         if ($failedJobs) {
@@ -447,7 +449,7 @@ class CronArchive
 
         $queueConsumer->setMaxSitesToProcess($this->maxSitesToProcess);
         $queueConsumer->setPreviousRunQueueProcessingStart(
-            is_string($previousQueueProcessingStart) && $previousQueueProcessingStart !== '' ? $previousQueueProcessingStart : null
+            is_string($previousQueueProcessingStart) && $previousQueueProcessingStart !== '' ? $previousQueueProcessingStart : $now
         );
 
         while (true) {

@@ -89,11 +89,12 @@ class QueueConsumer
     private $processedSiteCount = 0;
 
     /**
-     * Invalidations of a single report, like a report archived again for past periods, are deferred once: those
-     * queued since the previous run started to process the queue are processed after the other invalidations of all
-     * sites this process archives, so they never delay those, nor use up the process's limits before them. Older ones,
-     * which an earlier run deferred already, are processed in their site's turn, so a run that stops before its end
-     * leaves them to their site's next turn.
+     * Invalidations of a single report, like a report archived again for past periods, queued since the previous run
+     * started to process the queue are processed after the other invalidations of all sites this process archives, so
+     * they don't delay those, nor use up the process's limits before them. Older ones are processed in their site's
+     * turn. So the scheduled re-archiving a run applies is deferred by that run only; an invalidation queued directly
+     * during a run may be deferred by that run and the next. A run that stops before its end leaves them to their
+     * site's next turn, and a run restricted to some periods, segments or reports archives only those.
      *
      * @var int[]|null the sites whose single report invalidations are left, null until they are read
      */
@@ -355,7 +356,8 @@ class QueueConsumer
              * Invalidations of a single report, like those of `ArchiveInvalidator::reArchiveReport()` with a report,
              * queued since the previous run started to process the queue are archived after this event, once the other
              * invalidations of all sites of the process are, and without these events, unless `--force-report` is
-             * used. If the process stops before, they are archived in the site's next turn, between these events.
+             * used. Older ones, and those of a process that stopped before, are archived in the site's turn, between
+             * these events.
              *
              * Note: multiple archiving processes can post this event.
              *
@@ -721,9 +723,9 @@ class QueueConsumer
 
     /**
      * Single report invalidations queued up to the time the previous run started to process the queue are processed in
-     * their site's turn, as that run deferred them already.
+     * their site's turn, later ones after the other invalidations of all sites of the process.
      *
-     * @param string|null $datetime that time (UTC), null if there was no previous run
+     * @param string|null $datetime that time (UTC), null to process all of them after the other invalidations
      */
     public function setPreviousRunQueueProcessingStart(?string $datetime): void
     {
