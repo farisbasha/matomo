@@ -873,7 +873,7 @@ class ModelTest extends IntegrationTestCase
      *
      * @dataProvider getSingleReportInvalidations
      */
-    public function testGetNextInvalidatedArchiveFiltersSingleReportInvalidations(bool $singleReportInvalidations, ?string $before, array $expectedIdInvalidations)
+    public function testGetNextInvalidatedArchiveFiltersSingleReportInvalidations(bool $singleReportInvalidations, ?string $upTo, array $expectedIdInvalidations)
     {
         Fixture::createWebsite('2014-01-01 00:00:00');
 
@@ -887,7 +887,7 @@ class ModelTest extends IntegrationTestCase
         ]);
 
         $archiveFilter = new ArchiveFilter();
-        $archiveFilter->setSingleReportInvalidations($singleReportInvalidations, $before);
+        $archiveFilter->setSingleReportInvalidations($singleReportInvalidations, $upTo);
 
         $invalidations = $this->model->getNextInvalidatedArchive(1, '2030-01-01 00:00:00', null, false, $archiveFilter);
         $this->assertEqualsCanonicalizing($expectedIdInvalidations, array_column($invalidations, 'idinvalidation'));
@@ -900,8 +900,8 @@ class ModelTest extends IntegrationTestCase
     {
         yield 'single reports' => [true, null, [3, 4, 5]];
         yield 'others' => [false, null, [1, 2]];
-        yield 'others and single reports invalidated before' => [false, '2020-01-11 00:00:00', [1, 2, 5]];
-        yield 'the time applies to the others only' => [true, '2020-01-11 00:00:00', [3, 4, 5]];
+        yield 'others and single reports invalidated up to a time' => [false, '2020-01-10 23:59:59', [1, 2, 5]];
+        yield 'the time applies to the others only' => [true, '2020-01-10 23:59:59', [3, 4, 5]];
     }
 
     public function testDeleteInvalidationsForDeletedSites()

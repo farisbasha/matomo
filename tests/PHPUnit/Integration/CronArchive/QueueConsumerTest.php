@@ -1250,7 +1250,7 @@ class QueueConsumerTest extends IntegrationTestCase
 
                 $queueConsumer = $this->makeConsumerOfThreeSites($isSharedList ? new SharedSiteIds([1, 2, 3], $optionName) : new FixedSiteIds([1, 2, 3]));
                 $queueConsumer->setMaxSitesToProcess($run['maxSites'] ?? null);
-                $queueConsumer->setPreviousRunStartTime($queuedAt->getTimestamp() + ($run['previousRunAfterQueued'] ? 1 : -3600));
+                $queueConsumer->setPreviousRunQueueProcessingStart($run['previousRunAfterQueued'] ? $queuedAt->getDatetime() : $queuedAt->subSeconds(1)->getDatetime());
 
                 $this->assertSame($run['expected'], $this->consumeInvalidations($queueConsumer, $run['maxArchives'] ?? null), "run $index");
             }
@@ -1339,7 +1339,7 @@ class QueueConsumerTest extends IntegrationTestCase
             foreach ($runs as $index => [$previousRunAfterQueued, $expected]) {
                 $queueConsumer = $this->makeConsumerOfThreeSites(new SharedSiteIds([1, 2], $optionName));
                 $queueConsumer->setMaxSitesToProcess(1);
-                $queueConsumer->setPreviousRunStartTime($queuedAt->getTimestamp() + ($previousRunAfterQueued ? 1 : -3600));
+                $queueConsumer->setPreviousRunQueueProcessingStart($previousRunAfterQueued ? $queuedAt->getDatetime() : $queuedAt->subSeconds(1)->getDatetime());
 
                 $this->assertSame($expected, $this->consumeInvalidations($queueConsumer, null, [1]), "run $index");
             }

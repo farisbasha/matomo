@@ -69,10 +69,10 @@ class ArchiveFilter
     private $singleReportInvalidations = null;
 
     /**
-     * With $singleReportInvalidations false, the single reports invalidated before this time are processed too.
+     * With $singleReportInvalidations false, the single reports invalidated up to this time are processed too.
      * @var string|null
      */
-    private $singleReportInvalidationsBefore = null;
+    private $singleReportInvalidationsUpTo = null;
 
     public function __construct()
     {
@@ -144,7 +144,7 @@ class ArchiveFilter
         if (
             $this->singleReportInvalidations !== null
             && in_array($archive['report'] ?? null, [null, ''], true) === $this->singleReportInvalidations
-            && !$this->isSingleReportInvalidatedBefore($archive)
+            && !$this->isSingleReportInvalidatedUpTo($archive)
         ) {
             return $this->singleReportInvalidations ? 'not a single report' : 'single reports are archived after the other archives';
         }
@@ -278,12 +278,12 @@ class ArchiveFilter
     /**
      * @param bool|null $singleReportInvalidations true for invalidations of a single report only, false for the others
      *                                             only, null for all
-     * @param string|null $before with false, the single reports invalidated before this time (UTC) are processed too
+     * @param string|null $upTo with false, the single reports invalidated up to this time (UTC) are processed too
      */
-    public function setSingleReportInvalidations(?bool $singleReportInvalidations, ?string $before = null): void
+    public function setSingleReportInvalidations(?bool $singleReportInvalidations, ?string $upTo = null): void
     {
         $this->singleReportInvalidations = $singleReportInvalidations;
-        $this->singleReportInvalidationsBefore = $singleReportInvalidations === false ? $before : null;
+        $this->singleReportInvalidationsUpTo = $singleReportInvalidations === false ? $upTo : null;
     }
 
     public function getSingleReportInvalidations(): ?bool
@@ -291,16 +291,16 @@ class ArchiveFilter
         return $this->singleReportInvalidations;
     }
 
-    public function getSingleReportInvalidationsBefore(): ?string
+    public function getSingleReportInvalidationsUpTo(): ?string
     {
-        return $this->singleReportInvalidationsBefore;
+        return $this->singleReportInvalidationsUpTo;
     }
 
-    private function isSingleReportInvalidatedBefore(array $archive): bool
+    private function isSingleReportInvalidatedUpTo(array $archive): bool
     {
-        return $this->singleReportInvalidationsBefore !== null
+        return $this->singleReportInvalidationsUpTo !== null
             && isset($archive['ts_invalidated'])
-            && $archive['ts_invalidated'] < $this->singleReportInvalidationsBefore;
+            && $archive['ts_invalidated'] <= $this->singleReportInvalidationsUpTo;
     }
 
     /**

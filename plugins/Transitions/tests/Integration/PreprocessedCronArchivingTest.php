@@ -107,8 +107,8 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
         Config::getInstance()->General['rearchive_reports_in_past_last_n_months'] = self::REARCHIVE_MONTHS;
         Config::getInstance()->General['enable_browser_archiving_triggering'] = 0;
 
-        // the previous run started before the invalidations of the test, which are queued at the fixed time
-        Option::set(CronArchive::OPTION_ARCHIVING_STARTED_TS, self::$now - 1);
+        // the previous run started to process the queue before the invalidations of the test were queued
+        Option::set(CronArchive::OPTION_QUEUE_PROCESSING_STARTED, Date::factory(self::$now - 1)->getDatetime());
     }
 
     /**

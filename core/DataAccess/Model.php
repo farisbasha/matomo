@@ -1017,9 +1017,9 @@ class Model
             // LENGTH, as trailing spaces are ignored by the comparison in some collations
             if ($singleReportInvalidations) {
                 $conditions[] = self::SINGLE_REPORT_INVALIDATION_CONDITION;
-            } elseif ($archiveFilter->getSingleReportInvalidationsBefore() !== null) {
-                $conditions[] = '(report IS NULL OR LENGTH(report) = 0 OR ts_invalidated < ?)';
-                $bind[] = $archiveFilter->getSingleReportInvalidationsBefore();
+            } elseif ($archiveFilter->getSingleReportInvalidationsUpTo() !== null) {
+                $conditions[] = '(report IS NULL OR LENGTH(report) = 0 OR ts_invalidated <= ?)';
+                $bind[] = $archiveFilter->getSingleReportInvalidationsUpTo();
             } else {
                 $conditions[] = '(report IS NULL OR LENGTH(report) = 0)';
             }

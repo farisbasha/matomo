@@ -67,6 +67,14 @@ class CronArchive
     // Name of option used to store starting timestamp
     public const OPTION_ARCHIVING_STARTED_TS = "LastFullArchivingStartTime";
 
+    /**
+     * The time (UTC) the last run started to process the invalidation queue, after applying the scheduled
+     * re-archiving.
+     *
+     * @internal
+     */
+    public const OPTION_QUEUE_PROCESSING_STARTED = 'LastArchivingQueueProcessingStart';
+
     // Show only first N characters from Piwik API output in case of errors
     public const TRUNCATE_ERROR_MESSAGE_SUMMARY = 6000;
 
@@ -186,11 +194,6 @@ class CronArchive
     public $stopProcessingAfter = -1;
 
     private $archivingStartingTime;
-
-    /**
-     * @var int|null the start of the previous run, if any
-     */
-    private $previousArchivingStartingTime = null;
 
     private $formatter;
 
@@ -364,9 +367,6 @@ class CronArchive
         }
 
         // record archiving start time
-        Option::clearCachedOption(self::OPTION_ARCHIVING_STARTED_TS);
-        $previousStartTime = Option::get(self::OPTION_ARCHIVING_STARTED_TS);
-        $this->previousArchivingStartingTime = is_numeric($previousStartTime) ? (int) $previousStartTime : null;
         Option::set(self::OPTION_ARCHIVING_STARTED_TS, time());
 
         $allWebsites = APISitesManager::getInstance()->getAllSitesId();
@@ -420,6 +420,11 @@ class CronArchive
             $this->invalidator->applyScheduledReArchiving();
         });
 
+        // single report invalidations queued up to the time the previous run got here were deferred by it already
+        Option::clearCachedOption(self::OPTION_QUEUE_PROCESSING_STARTED);
+        $previousQueueProcessingStart = Option::get(self::OPTION_QUEUE_PROCESSING_STARTED);
+        Option::set(self::OPTION_QUEUE_PROCESSING_STARTED, Date::now()->getDatetime());
+
         $failedJobs = $this->model->resetFailedArchivingJobs();
         if ($failedJobs) {
             $this->logger->info("Found {failed} failed jobs (ts_invalidated older than 1 day), resetting status to try them again.", [
@@ -441,7 +446,9 @@ class CronArchive
         );
 
         $queueConsumer->setMaxSitesToProcess($this->maxSitesToProcess);
-        $queueConsumer->setPreviousRunStartTime($this->previousArchivingStartingTime);
+        $queueConsumer->setPreviousRunQueueProcessingStart(
+            is_string($previousQueueProcessingStart) && $previousQueueProcessingStart !== '' ? $previousQueueProcessingStart : null
+        );
 
         while (true) {
             if (null !== $this->signal) {
