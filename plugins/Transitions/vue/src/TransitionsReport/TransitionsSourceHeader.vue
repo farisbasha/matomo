@@ -34,23 +34,31 @@
           v-if="status.selected"
           type="button"
           class="transitionsSourceHeader__toggle"
-          :disabled="isSaving || isConfirming"
+          :disabled="isSaving"
           @click="confirmStop"
         >
           <span aria-hidden="true">&#9733;</span>
           {{ translate('Transitions_StopPreprocessing') }}
         </button>
 
+        <template v-else-if="isLimitReached">
+          <span class="transitionsSourceHeader__limit">{{ limitReachedHelp }}</span>
+          <a
+            class="transitionsSourceHeader__manageLink"
+            :href="manageUrl"
+          >{{ translate('Transitions_ManagePreprocessedPages') }}</a>
+        </template>
+
         <template v-else>
           <span
             class="transitionsSourceHeader__toggleWrap"
-            :title="isLimitReached ? limitReachedHelp : addHelp"
+            :title="addHelp"
           >
             <button
               type="button"
               class="transitionsSourceHeader__toggle"
-              :disabled="isSaving || isLimitReached"
-              :aria-describedby="isLimitReached ? limitHelpId : addHelpId"
+              :disabled="isSaving"
+              :aria-describedby="addHelpId"
               @click="add"
             >
               <span aria-hidden="true">&#9734;</span>
@@ -58,51 +66,11 @@
             </button>
           </span>
           <span
-            v-if="isLimitReached"
-            :id="limitHelpId"
-            class="u-visuallyHidden"
-          >{{ limitReachedHelp }}</span>
-          <span
-            v-else
             :id="addHelpId"
             class="u-visuallyHidden"
           >{{ addHelp }}</span>
-          <a
-            v-if="isLimitReached"
-            class="transitionsSourceHeader__manageLink"
-            :href="manageUrl"
-          >{{ translate('Transitions_ManagePreprocessedPages') }}</a>
-          <span
-            v-else
-            class="transitionsSourceHeader__usage"
-          >{{ usageLabel }}</span>
+          <span class="transitionsSourceHeader__usage">{{ usageLabel }}</span>
         </template>
-      </div>
-    </div>
-
-    <div
-      v-if="isConfirming && status?.selected"
-      class="transitionsSourceHeader__confirm"
-      role="group"
-      :aria-label="confirmLabel"
-    >
-      <div class="transitionsSourceHeader__confirmText">
-        <strong>{{ confirmLabel }}</strong>
-        {{ translate('Transitions_StopPreprocessingHelp') }}
-      </div>
-      <div class="transitionsSourceHeader__confirmActions">
-        <button
-          type="button"
-          class="btn-flat transitionsSourceHeader__cancel"
-          :disabled="isSaving"
-          @click="cancelStop"
-        >{{ translate('General_Cancel') }}</button>
-        <button
-          type="button"
-          class="btn transitionsSourceHeader__stop"
-          :disabled="isSaving"
-          @click="stop"
-        >{{ translate('Transitions_StopPreprocessing') }}</button>
       </div>
     </div>
 
@@ -116,6 +84,30 @@
       class="transitionsSourceHeader__error"
       role="alert"
     >{{ error }}</div>
+
+    <MatomoDialog
+      v-model="isStopDialogOpen"
+      @yes="stop"
+      @close-end="onStopDialogClosed"
+    >
+      <div class="ui-confirm">
+        <h2 class="transitionsSourceHeader__dialogTitle">{{ confirmLabel }}</h2>
+        <p>{{ translate('Transitions_StopPreprocessingHelp') }}</p>
+        <!-- the dialog turns the inputs into its buttons by these roles -->
+        <!-- eslint-disable vuejs-accessibility/aria-role -->
+        <input
+          role="yes"
+          type="button"
+          :value="translate('General_Yes')"
+        />
+        <input
+          role="no"
+          type="button"
+          :value="translate('General_No')"
+        />
+        <!-- eslint-enable vuejs-accessibility/aria-role -->
+      </div>
+    </MatomoDialog>
   </div>
 </template>
 
@@ -124,13 +116,14 @@ import { defineComponent, PropType } from 'vue';
 import {
   AjaxHelper,
   Matomo,
+  MatomoDialog,
   MatomoUrl,
   NumberFormatter,
   translate,
 } from 'CoreHome';
 import { TransitionsDataSource } from './types';
 import apiErrorText from '../apiErrorText';
-import { formatUtcDateTime, stopConfirmLabel } from '../preprocessedPageUrls';
+import { addedMessage, formatUtcDateTime, stopConfirmLabel } from '../preprocessedPageUrls';
 
 /** Transitions.getPreprocessedPageStatus */
 export interface PreprocessedPageStatus {
@@ -144,7 +137,7 @@ export interface PreprocessedPageStatus {
 export interface TransitionsSourceHeaderState {
   status: PreprocessedPageStatus|null;
   isSaving: boolean;
-  isConfirming: boolean;
+  isStopDialogOpen: boolean;
   message: string;
   error: string;
   siteHasPages: boolean;
@@ -176,11 +169,14 @@ export default defineComponent({
       default: '',
     },
   },
+  components: {
+    MatomoDialog,
+  },
   data(): TransitionsSourceHeaderState {
     return {
       status: null,
       isSaving: false,
-      isConfirming: false,
+      isStopDialogOpen: false,
       message: '',
       error: '',
       siteHasPages: !!Matomo.transitionsHasPreprocessedPages,
@@ -189,7 +185,6 @@ export default defineComponent({
   setup() {
     instanceCount += 1;
     return {
-      limitHelpId: `transitionsSourceHeaderLimit${instanceCount}`,
       addHelpId: `transitionsSourceHeaderAdd${instanceCount}`,
       badgeHelpId: `transitionsSourceHeaderBadge${instanceCount}`,
       // each status load starts a generation; a response of an older one is dropped
@@ -300,17 +295,6 @@ export default defineComponent({
     confirmLabel(): string {
       return stopConfirmLabel(this.actionName);
     },
-    addedMessage(): string {
-      const months = this.status?.rearchiveMonths ?? 0;
-
-      if (months <= 0) {
-        return translate('Transitions_PreprocessedPageAddedNewDataOnly');
-      }
-
-      return months === 1
-        ? translate('Transitions_PreprocessedPageAddedRebuildOneMonth')
-        : translate('Transitions_PreprocessedPageAddedRebuild', NumberFormatter.formatNumber(months));
-    },
     manageUrl(): string {
       return `?${MatomoUrl.stringify({
         module: 'Transitions',
@@ -346,7 +330,6 @@ export default defineComponent({
       const load = this.statusLoads.latest;
       this.status = null;
       this.isSaving = false;
-      this.isConfirming = false;
       this.message = '';
       this.error = '';
 
@@ -401,7 +384,7 @@ export default defineComponent({
           used: this.status.used + 1,
         };
         this.updateSiteHasPages(this.status.used);
-        this.message = this.addedMessage;
+        this.message = addedMessage(this.status.rearchiveMonths);
         // the toggle is replaced by the stop button, which takes the focus
         this.isSaving = false;
         this.focusToggle();
@@ -410,6 +393,11 @@ export default defineComponent({
         if (this.isCurrent(load)) {
           this.error = apiErrorText(error);
           return this.fetchStatus(load).then(() => {
+            if (this.isLimitReached) {
+              // the limit text that replaced the toggle says it already
+              this.error = '';
+            }
+
             this.isSaving = false;
             this.focusToggle();
           });
@@ -422,24 +410,24 @@ export default defineComponent({
         }
       });
     },
-    /** The toggle is disabled while the choice is open, so the focus moves to the choice. */
+    /** Matomo's confirmation dialog; the toggle gets the focus back once it closed and saved. */
     confirmStop() {
-      this.isConfirming = true;
-      this.$nextTick(() => {
-        const cancel = (this.$el as HTMLElement).querySelector<HTMLElement>(
-          '.transitionsSourceHeader__cancel',
-        );
-        cancel?.focus();
-      });
+      this.isStopDialogOpen = true;
     },
-    cancelStop() {
-      this.isConfirming = false;
-      this.focusToggle();
+    onStopDialogClosed() {
+      if (!this.isSaving) {
+        this.focusToggle();
+      }
     },
+    /** The toggle, or the link to the admin page when the limit took its place. */
     focusToggle() {
+      if (this.isStopDialogOpen) {
+        return;
+      }
+
       this.$nextTick(() => {
         (this.$el as HTMLElement).querySelector<HTMLElement>(
-          '.transitionsSourceHeader__toggle',
+          '.transitionsSourceHeader__toggle, .transitionsSourceHeader__manageLink',
         )?.focus();
       });
     },
@@ -469,14 +457,13 @@ export default defineComponent({
           idPage: null,
           used: Math.max(0, this.status.used - 1),
         };
-        this.isConfirming = false;
+        this.message = translate('Transitions_StopPreprocessingHelp');
         this.isSaving = false;
         this.focusToggle();
       }).catch((error) => {
         // eg the page was removed by another admin meanwhile
         if (this.isCurrent(load)) {
           this.error = apiErrorText(error);
-          this.isConfirming = false;
           return this.fetchStatus(load).then(() => {
             this.isSaving = false;
             this.focusToggle();

@@ -5,7 +5,7 @@
  * @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
  */
 
-import { Matomo, translate } from 'CoreHome';
+import { Matomo, NumberFormatter, translate } from 'CoreHome';
 
 const SCHEME_AND_WWW = /^(https?:\/\/)?(www\.)?/i;
 
@@ -85,6 +85,17 @@ export function stopConfirmLabel(url: string): string {
     'Transitions_StopPreprocessingConfirm',
     readableUrl(url).replace(/^https?:\/\/(www\.)?/i, ''),
   );
+}
+
+/** What happens after a page is added, given the months its past data is rebuilt for. */
+export function addedMessage(rearchiveMonths: number): string {
+  if (rearchiveMonths <= 0) {
+    return translate('Transitions_PreprocessedPageAddedNewDataOnly');
+  }
+
+  return rearchiveMonths === 1
+    ? translate('Transitions_PreprocessedPageAddedRebuildOneMonth')
+    : translate('Transitions_PreprocessedPageAddedRebuild', NumberFormatter.formatNumber(rearchiveMonths));
 }
 
 /** A `YYYY-MM-DD HH:MM:SS` time in UTC, as the API returns it, to the minute. */

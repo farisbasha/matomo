@@ -45,6 +45,12 @@ vi.mock('CoreHome', async () => {
         return true;
       },
     }),
+    MatomoDialog: {
+      name: 'MatomoDialog',
+      props: ['modelValue'],
+      emits: ['yes', 'closeEnd', 'update:modelValue'],
+      template: '<div class="matomoDialog"><slot /></div>',
+    },
     MatomoUrl: {
       parsed: { value: { period: 'year', date: '2025-01-01' } },
       stringify: (params: Record<string, unknown>) => Object.entries(params)
@@ -103,6 +109,25 @@ async function mountHeader(
   });
   await flushPromises();
   return wrapper;
+}
+
+/** Matomo's confirmation dialog: whether it is open, and its content. */
+function dialogOf(wrapper: VueWrapper) {
+  return wrapper.findComponent({ name: 'MatomoDialog' });
+}
+
+/** Answers Matomo's confirmation dialog, then lets it close. */
+async function answerDialog(wrapper: VueWrapper, yes: boolean) {
+  const dialog = dialogOf(wrapper);
+  expect(dialog.props('modelValue')).toBe(true);
+
+  if (yes) {
+    dialog.vm.$emit('yes');
+  }
+
+  dialog.vm.$emit('update:modelValue', false);
+  dialog.vm.$emit('closeEnd');
+  await flushPromises();
 }
 
 function statusRequests() {
@@ -209,8 +234,7 @@ describe('Transitions/TransitionsSourceHeader', () => {
 
       // the data stored for a removed page is still served, also beyond the period limit
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(wrapper.find('.transitionsSourceHeader__badge').text()).toBe('Transitions_RawDataBadge');
       expect(state.matomo.transitionsHasPreprocessedPages).toBe(true);
@@ -302,16 +326,13 @@ describe('Transitions/TransitionsSourceHeader', () => {
       expect(wrapper.find('.transitionsSourceHeader__manageLink').exists()).toBe(false);
     });
 
-    it('should disable adding at the limit and link to the admin page', async () => {
+    it('should explain the limit instead of the toggle and link to the admin page', async () => {
       state.fetch.mockResolvedValue(status({ used: 20 }));
       const wrapper = await mountHeader();
 
-      const toggle = wrapper.find('.transitionsSourceHeader__toggle');
-      expect(toggle.attributes('disabled')).toBeDefined();
-      expect(wrapper.find('.transitionsSourceHeader__toggleWrap').attributes('title'))
+      expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
+      expect(wrapper.find('.transitionsSourceHeader__limit').text())
         .toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
-      const helpId = toggle.attributes('aria-describedby');
-      expect(wrapper.find(`#${helpId}`).text()).toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
       expect(wrapper.find('.transitionsSourceHeader__usage').exists()).toBe(false);
 
       const link = wrapper.find('.transitionsSourceHeader__manageLink');
@@ -327,10 +348,8 @@ describe('Transitions/TransitionsSourceHeader', () => {
       state.fetch.mockResolvedValue(status(counts));
       const wrapper = await mountHeader();
 
-      expect(wrapper.find('.transitionsSourceHeader__toggle').attributes('disabled')).toBeDefined();
-      expect(wrapper.find('.transitionsSourceHeader__toggleWrap').attributes('title')).toBe(help);
-      const describedBy = wrapper.find('.transitionsSourceHeader__toggle').attributes('aria-describedby');
-      expect(wrapper.find(`#${describedBy}`).text()).toBe(help);
+      expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
+      expect(wrapper.find('.transitionsSourceHeader__limit').text()).toBe(help);
     });
 
     it('should add the page and say how far back it is prepared', async () => {
@@ -398,9 +417,11 @@ describe('Transitions/TransitionsSourceHeader', () => {
       await flushPromises();
 
       expect(statusRequests()).toHaveLength(2);
-      expect(wrapper.find('.transitionsSourceHeader__error').text())
-        .toBe('You can select at most 20 pages for pre-processed Transitions.');
-      expect(wrapper.find('.transitionsSourceHeader__toggle').attributes('disabled')).toBeDefined();
+      // the limit text replaces the toggle and says why, so the error isn't repeated
+      expect(wrapper.find('.transitionsSourceHeader__error').exists()).toBe(false);
+      expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
+      expect(wrapper.find('.transitionsSourceHeader__limit').text())
+        .toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
       expect(wrapper.find('.transitionsSourceHeader__manageLink').exists()).toBe(true);
     });
 
@@ -425,13 +446,11 @@ describe('Transitions/TransitionsSourceHeader', () => {
 
       state.fetch.mockResolvedValue(status({ used: 11 }));
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(statusRequests()).toHaveLength(2);
       expect(wrapper.find('.transitionsSourceHeader__error').text())
         .toBe('This page is not selected for pre-processed Transitions.');
-      expect(wrapper.find('.transitionsSourceHeader__confirm').exists()).toBe(false);
       expect(wrapper.find('.transitionsSourceHeader__toggle').text()).toContain('Transitions_PreprocessThisPage');
       expect(wrapper.find('.transitionsSourceHeader__usage').text())
         .toBe('Transitions_PreprocessedPagesUsage:11|20');
@@ -443,25 +462,28 @@ describe('Transitions/TransitionsSourceHeader', () => {
 
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
 
-      expect(wrapper.find('.transitionsSourceHeader__confirm strong').text())
+      expect(wrapper.find('.transitionsSourceHeader__dialogTitle').text())
         .toBe('Transitions_StopPreprocessingConfirm:example.org/a?b=1&c=<d>');
     });
 
-    it('should move the focus back to the toggle when the confirmation closes', async () => {
+    it('should move the focus back to the toggle once the dialog has closed', async () => {
       state.fetch.mockResolvedValue(status({ selected: true, idPage: 3 }));
       state.post.mockResolvedValue({});
       const wrapper = await mountHeader({}, document.body);
 
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await flushPromises();
-      expect(document.activeElement?.className).toContain('transitionsSourceHeader__cancel');
-
-      await wrapper.find('.transitionsSourceHeader__cancel').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, false);
       expect(document.activeElement?.className).toContain('transitionsSourceHeader__toggle');
 
+      // stopped while the dialog is still closing: the toggle is focused once it has closed
+      (document.activeElement as HTMLElement).blur();
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
+      dialogOf(wrapper).vm.$emit('yes');
+      await flushPromises();
+      expect(document.activeElement).toBe(document.body);
+
+      dialogOf(wrapper).vm.$emit('update:modelValue', false);
+      dialogOf(wrapper).vm.$emit('closeEnd');
       await flushPromises();
       expect(document.activeElement?.textContent).toContain('Transitions_PreprocessThisPage');
 
@@ -493,25 +515,30 @@ describe('Transitions/TransitionsSourceHeader', () => {
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
       expect(state.post).not.toHaveBeenCalled();
 
-      const confirm = wrapper.find('.transitionsSourceHeader__confirm');
-      expect(confirm.text()).toContain('Transitions_StopPreprocessingConfirm:example.org/page');
-      expect(confirm.text()).toContain('Transitions_StopPreprocessingHelp');
+      // Matomo's confirmation dialog, with its Yes and No
+      expect(dialogOf(wrapper).props('modelValue')).toBe(true);
+      const dialog = dialogOf(wrapper).find('.ui-confirm').element;
+      expect(wrapper.find('.transitionsSourceHeader__dialogTitle').text())
+        .toBe('Transitions_StopPreprocessingConfirm:example.org/page');
+      expect(dialog.textContent).toContain('Transitions_StopPreprocessingHelp');
+      expect(Array.from(dialog.querySelectorAll('input'))
+        .map((input) => [input.getAttribute('role'), input.value]))
+        .toEqual([['yes', 'General_Yes'], ['no', 'General_No']]);
 
-      await wrapper.find('.transitionsSourceHeader__cancel').trigger('click');
-      expect(wrapper.find('.transitionsSourceHeader__confirm').exists()).toBe(false);
+      await answerDialog(wrapper, false);
       expect(state.post).not.toHaveBeenCalled();
 
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(state.post).toHaveBeenCalledWith(
         { method: 'Transitions.removePreprocessedPage', idSite: 1 },
         { idPage: 3 },
         { createErrorNotification: false },
       );
-      expect(wrapper.find('.transitionsSourceHeader__confirm').exists()).toBe(false);
       expect(wrapper.find('.transitionsSourceHeader__toggle').text()).toContain('Transitions_PreprocessThisPage');
+      // what happens to the data already prepared
+      expect(wrapper.find('.transitionsSourceHeader__message').text()).toBe('Transitions_StopPreprocessingHelp');
       expect(wrapper.find('.transitionsSourceHeader__usage').text())
         .toBe('Transitions_PreprocessedPagesUsage:11|20');
       // data already stored is still what this report shows
@@ -525,9 +552,9 @@ describe('Transitions/TransitionsSourceHeader', () => {
 
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
 
-      const confirm = wrapper.find('.transitionsSourceHeader__confirm');
-      expect(confirm.text()).toContain('example.org/<img src=x onerror=alert(1)>');
-      expect(confirm.find('img').exists()).toBe(false);
+      const title = wrapper.find('.transitionsSourceHeader__dialogTitle');
+      expect(title.text()).toContain('example.org/<img src=x onerror=alert(1)>');
+      expect(wrapper.find('img').exists()).toBe(false);
     });
 
     it('should send a page URL without a scheme with http://, which matches https too', async () => {
@@ -566,8 +593,7 @@ describe('Transitions/TransitionsSourceHeader', () => {
       state.post.mockReset();
       state.post.mockResolvedValue({});
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(state.post.mock.calls[0][1]).toEqual({ idPage: 9 });
     });
@@ -592,8 +618,7 @@ describe('Transitions/TransitionsSourceHeader', () => {
       expect(wrapper.find('.transitionsSourceHeader__message').exists()).toBe(false);
       expect(wrapper.find('.transitionsSourceHeader__toggle').text()).toContain('Transitions_StopPreprocessing');
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      expect(wrapper.find('.transitionsSourceHeader__confirm').exists()).toBe(true);
-      await wrapper.find('.transitionsSourceHeader__cancel').trigger('click');
+      await answerDialog(wrapper, false);
       expect(wrapper.find('.transitionsSourceHeader__usage').exists()).toBe(false);
     });
 
@@ -623,7 +648,7 @@ describe('Transitions/TransitionsSourceHeader', () => {
       const wrapper = await mountHeader();
 
       await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
-      await wrapper.find('.transitionsSourceHeader__stop').trigger('click');
+      await answerDialog(wrapper, true);
 
       state.fetch.mockResolvedValue(status({ selected: true, idPage: 9, used: 12 }));
       await wrapper.setProps({ actionName: 'https://example.org/other' });
@@ -635,7 +660,6 @@ describe('Transitions/TransitionsSourceHeader', () => {
       const toggle = wrapper.find('.transitionsSourceHeader__toggle');
       expect(toggle.text()).toContain('Transitions_StopPreprocessing');
       expect(toggle.attributes('disabled')).toBeUndefined();
-      expect(wrapper.find('.transitionsSourceHeader__confirm').exists()).toBe(false);
     });
 
     it('should ask again for the status of another page', async () => {
