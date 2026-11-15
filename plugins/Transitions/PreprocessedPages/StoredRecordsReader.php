@@ -313,7 +313,7 @@ final class StoredRecordsReader
             $rows = Db::fetchAll(
                 'SELECT r.date1, r.date2, r.ts_archived FROM ' . $table . ' r WHERE r.idarchive IN (' . implode(',', $idArchives) . ') AND r.name = ?'
                 . ' AND (r.idarchive IN (' . implode(',', $invalidatedIdArchives ?: [0]) . ')'
-                . ' OR EXISTS (SELECT 1 FROM ' . $table . ' m WHERE m.idarchive = r.idarchive AND m.name = ?))',
+                . ' OR EXISTS (SELECT 1 FROM ' . $table . ' m WHERE m.idarchive = r.idarchive AND m.name = ? AND m.value > 0))',
                 [$recordName, Records::INVALIDATED]
             );
             foreach ($periodsOfTable as $period) {

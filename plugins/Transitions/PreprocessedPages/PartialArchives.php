@@ -120,6 +120,24 @@ final class PartialArchives
     }
 
     /**
+     * Queues the Transitions archive of a longer period whose records were summed from a subperiod's archive marked
+     * {@link Records::INVALIDATED}, so `core:archive` builds it again after that subperiod, without the marker. Only the
+     * period's archives of this plugin are marked invalidated, not the period's ranges or longer periods, which are
+     * marked in turn when they are built from it.
+     */
+    public function invalidateLongerPeriod(int $idSite, Period $period, Segment $segment): void
+    {
+        $this->model->updateArchiveAsInvalidated(
+            ArchiveTableCreator::getNumericTable($period->getDateStart(), false) ?: null,
+            [$idSite],
+            [$period],
+            $segment,
+            false,
+            'Transitions'
+        );
+    }
+
+    /**
      * Deletes the page's older partial archives of the day and segment, which hold only the page's records, once a
      * newer one is written.
      */

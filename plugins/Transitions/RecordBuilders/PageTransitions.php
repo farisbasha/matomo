@@ -23,6 +23,7 @@ use Piwik\Log\LoggerInterface;
 use Piwik\Metrics;
 use Piwik\Period\Range;
 use Piwik\Plugins\Transitions\Model;
+use Piwik\Plugins\Transitions\PreprocessedPages\PartialArchives;
 use Piwik\Plugins\Transitions\PreprocessedPages\Records;
 use Piwik\Plugins\Transitions\PreprocessedPages\Service;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsReader;
@@ -183,9 +184,16 @@ class PageTransitions extends RecordBuilder
             $archiveProcessor->insertNumericRecord(Records::DAYS_WITH_VISITS, $daysWithVisits);
         }
 
-        // the records summed from a subperiod's partial archive marked invalidated aren't served either
-        if ($this->isAnyMarkedInvalidated($archive)) {
-            $archiveProcessor->insertNumericRecord(Records::INVALIDATED, 1);
+        // the records summed from a subperiod's partial archive marked invalidated aren't served either, until the
+        // period is archived again once that subperiod is; 0 replaces the marker of the period's older archives
+        $isMarked = $this->isAnyMarkedInvalidated($archive);
+        $archiveProcessor->insertNumericRecord(Records::INVALIDATED, $isMarked ? 1 : 0);
+        if ($isMarked) {
+            StaticContainer::get(PartialArchives::class)->invalidateLongerPeriod(
+                $this->getIdSite($archiveProcessor),
+                $params->getPeriod(),
+                $params->getSegment()
+            );
         }
     }
 

@@ -13,6 +13,8 @@ namespace Piwik\Plugins\Transitions\tests\Integration;
 
 use Piwik\Archive;
 use Piwik\Archive\ArchiveInvalidator;
+use Piwik\ArchiveProcessor\Loader as ArchiveLoader;
+use Piwik\ArchiveProcessor\Parameters;
 use Piwik\ArchiveProcessor\Rules;
 use Piwik\Cache;
 use Piwik\Common;
@@ -34,6 +36,7 @@ use Piwik\Option;
 use Piwik\Piwik;
 use Piwik\Plugin\Manager as PluginManager;
 use Piwik\Period\Day;
+use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Period\Month;
 use Piwik\Period\Week;
 use Piwik\Period\Year;
@@ -51,6 +54,7 @@ use Piwik\Plugins\Transitions\PreprocessedPages\Service;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsLoader;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsReader;
 use Piwik\Segment;
+use Piwik\Site;
 use Piwik\Tests\Fixtures\SomeVisitsManyPageviewsWithTransitions;
 use Piwik\Tests\Framework\Fixture;
 use Piwik\Tests\Framework\Mock\FakeAccess;
@@ -666,7 +670,7 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [Date::factory(self::DAY)], 'day');
 
         self::assertSame(0, (int) Db::fetchOne(
-            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE name = ?',
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE name = ? AND value > 0',
             [Records::INVALIDATED]
         ));
     }
@@ -734,9 +738,42 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
 
         self::assertArrayNotHasKey('preprocessed', $this->request('week', self::DAY));
         self::assertSame(1, (int) Db::fetchOne(
-            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE idsite = 1 AND period = ? AND name = ?',
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE idsite = 1 AND period = ? AND name = ? AND value > 0',
             [Week::PERIOD_ID, Records::INVALIDATED]
         ));
+    }
+
+    /**
+     * The build of a longer period summed from a marked day queues it, so `core:archive` archives it again after the
+     * day, and it and the periods built from it are served again.
+     */
+    public function testALongerPeriodSummedFromAMarkedDayIsServedAgainOnceArchivedAfterTheDay(): void
+    {
+        $this->archiveAllPlugins(self::DAY);
+        $idPage = $this->selectPage(self::PAGE_URL);
+        self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
+
+        StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [Date::factory(self::DAY)], 'day', null, false, false, 'Transitions');
+        $this->setBrowserArchiving(false);
+        $this->archive($idPage, 'week', self::DAY);
+        self::assertArrayNotHasKey('preprocessed', $this->request('week', self::DAY));
+        self::assertSame(1, (int) Db::fetchOne(
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_invalidations') . " WHERE idsite = 1 AND period = ? AND date1 = '2010-03-01' AND name = 'done.Transitions' AND report IS NULL AND status = 0",
+            [Week::PERIOD_ID]
+        ));
+
+        // as core:archive processes the day's invalidation, then the week's
+        $this->archivePluginAsCoreArchive('day', self::DAY);
+        $this->archivePluginAsCoreArchive('week', self::DAY);
+        self::assertSame(1, $this->request('week', self::DAY)['preprocessed']);
+
+        // a month built from the week isn't marked
+        $this->archivePluginAsCoreArchive('month', self::DAY);
+        self::assertSame(0, (int) Db::fetchOne(
+            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' WHERE idsite = 1 AND period = ? AND name = ? AND value > 0',
+            [Month::PERIOD_ID, Records::INVALIDATED]
+        ));
+        self::assertSame(1, $this->request('month', self::DAY)['preprocessed']);
     }
 
     /**
@@ -1241,6 +1278,25 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     /**
      * Archives the period as browser archiving does, with the page's records and the visits.
      */
+    /**
+     * Archives this plugin alone, as `core:archive` processes its invalidation.
+     */
+    private function archivePluginAsCoreArchive(string $period, string $date): void
+    {
+        $_GET['trigger'] = 'archivephp';
+        $_GET['pluginOnly'] = '1';
+        Cache::getTransientCache()->flushAll();
+
+        try {
+            $params = new Parameters(new Site(1), PeriodFactory::build($period, $date), new Segment('', [1]));
+            $params->setRequestedPlugin('Transitions');
+            (new ArchiveLoader($params))->prepareArchive('Transitions');
+        } finally {
+            unset($_GET['trigger'], $_GET['pluginOnly']);
+            Cache::getTransientCache()->flushAll();
+        }
+    }
+
     private function archive(int $idPage, string $period, string $date, string $segment = ''): void
     {
         $general = Config::getInstance()->General;
@@ -1292,7 +1348,7 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         return (int) Db::fetchOne(
             'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03')
             . " p WHERE idsite = 1 AND period = ? AND date1 = ? AND name LIKE 'done%.Transitions' AND value = ?"
-            . ' AND ' . ($invalidated ? '' : 'NOT ') . 'EXISTS (SELECT 1 FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' m WHERE m.idarchive = p.idarchive AND m.name = ?)',
+            . ' AND ' . ($invalidated ? '' : 'NOT ') . 'EXISTS (SELECT 1 FROM ' . Common::prefixTable('archive_numeric_2010_03') . ' m WHERE m.idarchive = p.idarchive AND m.name = ? AND m.value > 0)',
             [$periodId, $date1, ArchiveWriter::DONE_PARTIAL, Records::INVALIDATED]
         );
     }
@@ -1316,7 +1372,7 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
 
         return (int) Db::fetchOne(
             'SELECT COUNT(*) FROM ' . $table . ' p WHERE idsite = ? AND period = ? AND date1 = ? AND name = ? AND value = ?'
-            . ' AND ' . ($invalidated ? '' : 'NOT ') . 'EXISTS (SELECT 1 FROM ' . $table . ' m WHERE m.idarchive = p.idarchive AND m.name = ?)',
+            . ' AND ' . ($invalidated ? '' : 'NOT ') . 'EXISTS (SELECT 1 FROM ' . $table . ' m WHERE m.idarchive = p.idarchive AND m.name = ? AND m.value > 0)',
             [$idSite, $periodId, $date1, $this->getPartialDoneFlag($idSite, $segment), ArchiveWriter::DONE_PARTIAL, Records::INVALIDATED]
         );
     }
