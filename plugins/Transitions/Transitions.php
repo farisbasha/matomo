@@ -226,6 +226,7 @@ class Transitions extends \Piwik\Plugin
         $translationKeys[] = 'Transitions_StopPreprocessing';
         $translationKeys[] = 'Transitions_StopPreprocessingConfirm';
         $translationKeys[] = 'Transitions_StopPreprocessingHelp';
+        $translationKeys[] = 'Transitions_PreprocessedPageRemoved';
         $translationKeys[] = 'Transitions_PreprocessedPagesLimitReachedHelp';
         $translationKeys[] = 'Transitions_ManagePreprocessedPages';
         $translationKeys[] = 'Transitions_PreprocessedPageAddedRebuild';
