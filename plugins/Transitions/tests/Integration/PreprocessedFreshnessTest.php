@@ -808,9 +808,12 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
 
         PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
         $this->rebuildAsCoreArchive($idPage, 'week', self::DAY);
+        self::assertSame(1, $this->countPartialArchives('2010-03-01', Week::PERIOD_ID, true));
+        // the build doesn't queue it, the catch-up does once it has finished
+        self::assertSame(0, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+
         (new Tasks())->catchUpOnInvalidatedArchives();
 
-        self::assertSame(1, $this->countPartialArchives('2010-03-01', Week::PERIOD_ID, true));
         self::assertSame(1, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
 
         // as core:archive processes the week's invalidation
@@ -819,9 +822,9 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     }
 
     /**
-     * A longer period summed from a marked day that won't be archived again isn't queued again with every build.
+     * A longer period summed from a marked day doesn't queue itself; the day's archiving again queues it.
      */
-    public function testALongerPeriodIsQueuedOnlyIfItsMarkedSubperiodIsQueued(): void
+    public function testALongerPeriodIsQueuedByItsMarkedSubperiodArchivedAgain(): void
     {
         $idPage = $this->selectPage(self::PAGE_URL);
         self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
@@ -830,9 +833,20 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
 
         $this->rebuildAsCoreArchive($idPage, 'week', self::DAY);
+        $this->rebuildAsCoreArchive($idPage, 'month', self::DAY);
 
         self::assertSame(1, $this->countPartialArchives('2010-03-01', Week::PERIOD_ID, true));
         self::assertSame(0, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+
+        // a page's day archive doesn't replace the other pages' marked one
+        $this->rebuildAsCoreArchive($idPage, 'day', self::DAY);
+        self::assertSame(0, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+
+        $this->archivePluginAsCoreArchive('day', self::DAY);
+        self::assertSame(1, $this->countQueuedPluginInvalidations(Week::PERIOD_ID, '2010-03-01'));
+        self::assertSame(1, $this->countQueuedPluginInvalidations(Month::PERIOD_ID, '2010-03-01'));
+        // not built yet, so not marked
+        self::assertSame(0, $this->countQueuedPluginInvalidations(Year::PERIOD_ID, '2010-01-01'));
     }
 
     private function countMarkedArchives(int $periodId): int

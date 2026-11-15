@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Piwik\Plugins\Transitions\PreprocessedPages;
 
+use Piwik\Archive;
 use Piwik\ArchiveProcessor\Rules;
 use Piwik\Common;
 use Piwik\Container\StaticContainer;
@@ -21,7 +22,9 @@ use Piwik\Db;
 use Piwik\Option;
 use Piwik\Period;
 use Piwik\Period\Day;
+use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Period\Range;
+use Piwik\Piwik;
 use Piwik\Plugins\SitesManager\Model as SitesModel;
 use Piwik\Segment;
 
@@ -39,6 +42,12 @@ use Piwik\Segment;
  */
 final class PartialArchives
 {
+    /**
+     * The {@link Records::INVALIDATED} value of a longer period built while the catch-up is pending, which the
+     * catch-up queues once it has finished. Other marked archives hold 1, unmarked longer periods 0.
+     */
+    public const MARKED_WHILE_CATCH_UP_PENDING = 2;
+
     private const INVALIDATION_MARKER_OPTION_PREFIX = 'Transitions.invalidated_';
 
     /**
@@ -121,10 +130,10 @@ final class PartialArchives
      * Marks the partial archives of the periods and segments that have an invalidated archive, or a queued invalidation
      * of all or of this plugin's reports, if {@link scheduleCatchUpOnInvalidatedArchives()} was called. Those built
      * after the invalidation are marked too, so they aren't served until the period is archived again: core keeps the
-     * older time of a queued invalidation when it adds another one to it. It reads every
-     * numeric row of the websites with pages, so it runs as a scheduled task, one table after the other, and continues
-     * after the last finished table if it was stopped. If the plugin is activated again meanwhile, it stops, and the
-     * next run starts again.
+     * older time of a queued invalidation when it adds another one to it. It reads every numeric row of the websites
+     * with pages, so it runs as a scheduled task, one table after the other, and continues after the last finished
+     * table if it was stopped. If the plugin is activated again meanwhile, it stops, and the next run starts again.
+     * Once it has finished, it queues the longer periods built meanwhile.
      */
     public function catchUpOnInvalidatedArchives(): void
     {
@@ -166,6 +175,49 @@ final class PartialArchives
 
         // unless the plugin was activated again meanwhile
         Option::delete(self::CATCH_UP_OPTION, $value);
+        Option::clearCachedOption(self::CATCH_UP_OPTION);
+        if (Option::get(self::CATCH_UP_OPTION) !== false) {
+            return;
+        }
+
+        foreach ($tables as $table) {
+            foreach (array_chunk($idSites, self::SITES_PER_QUERY) as $idSitesOfChunk) {
+                $this->queueArchivesMarkedWhileCatchUpPending($table, $idSitesOfChunk);
+            }
+        }
+    }
+
+    /**
+     * @param list<int> $idSites
+     */
+    private function queueArchivesMarkedWhileCatchUpPending(string $table, array $idSites): void
+    {
+        $rows = Db::fetchAll(
+            'SELECT DISTINCT d.idsite, d.period, d.date1, d.date2, d.name FROM `' . $table . '` m'
+            . ' JOIN `' . $table . "` d ON d.idarchive = m.idarchive AND d.name LIKE 'done%'"
+            . ' WHERE m.idsite IN (' . implode(',', $idSites) . ') AND m.period > ? AND m.name = ? AND m.value = ?',
+            [Day::PERIOD_ID, Records::INVALIDATED, self::MARKED_WHILE_CATCH_UP_PENDING]
+        );
+
+        $segmentsByHash = [];
+        foreach ($rows as $row) {
+            $idSite = (int) $row['idsite'];
+            if (!isset($segmentsByHash[$idSite])) {
+                $segmentsByHash[$idSite] = ['' => new Segment('', [$idSite])];
+                foreach (Rules::getSegmentsToProcess([$idSite]) as $definition) {
+                    $segmentsByHash[$idSite][Segment::getSegmentHash($definition)] = new Segment($definition, [$idSite]);
+                }
+            }
+
+            $hash = substr(explode('.', (string) $row['name'])[0], strlen('done'));
+            $segment = $segmentsByHash[$idSite][$hash] ?? null;
+            $periodLabel = array_search((int) $row['period'], Piwik::$idPeriods, true);
+            if ($segment === null || !is_string($periodLabel)) {
+                continue;
+            }
+
+            $this->invalidateLongerPeriod($idSite, PeriodFactory::build($periodLabel, (string) $row['date1']), $segment);
+        }
     }
 
     /**
@@ -183,12 +235,62 @@ final class PartialArchives
     }
 
     /**
-     * Queues the Transitions archive of a longer period whose records were summed from a subperiod's archive marked
-     * {@link Records::INVALIDATED}, so `core:archive` builds it again after that subperiod, without the marker. Only the
-     * period's archives of this plugin are marked invalidated, not the period's ranges or longer periods, which are
-     * marked in turn when they are built from it.
+     * Returns the periods whose records are read from an archive marked {@link Records::INVALIDATED}.
+     *
+     * @param list<Period> $periods
+     * @return list<Period>
      */
-    public function invalidateLongerPeriod(int $idSite, Period $period, Segment $segment): void
+    public function getMarkedPeriods(int $idSite, array $periods, Segment $segment): array
+    {
+        if (empty($periods)) {
+            return [];
+        }
+
+        $archive = Archive::factory($segment, $periods, [$idSite], false, true);
+        if (!$archive instanceof Archive) {
+            return [];
+        }
+        $archive->forceFetchingWithoutLaunchingArchiving();
+
+        // read alone, as a value missing next to another is returned as 0
+        $markers = $archive->getNumeric([Records::INVALIDATED]);
+        $markers = is_array($markers) ? $markers : [];
+
+        return array_values(array_filter($periods, function (Period $period) use ($markers): bool {
+            $markersOfPeriod = $markers[$period->getRangeString()] ?? null;
+            $value = is_array($markersOfPeriod) ? $markersOfPeriod[Records::INVALIDATED] ?? 0 : 0;
+
+            return is_numeric($value) && $value > 0;
+        }));
+    }
+
+    /**
+     * Queues the marked week, month and year containing a period that was archived again without the marker, so they
+     * are built again from it. It is called from the period's own build only, so a period never queues itself, and a
+     * longer period is queued again only once one of its subperiods was archived again.
+     */
+    public function queueMarkedLongerPeriods(int $idSite, Period $period, Segment $segment): void
+    {
+        $longerPeriods = [];
+        foreach (['week', 'month', 'year'] as $label) {
+            $longerPeriod = PeriodFactory::build($label, $period->getDateStart());
+            if ($longerPeriod->getId() > $period->getId()) {
+                $longerPeriods[] = $longerPeriod;
+            }
+        }
+
+        foreach ($this->getMarkedPeriods($idSite, $longerPeriods, $segment) as $longerPeriod) {
+            $this->invalidateLongerPeriod($idSite, $longerPeriod, $segment);
+        }
+    }
+
+    /**
+     * Queues the Transitions archive of a longer period whose records were summed from a subperiod's archive marked
+     * {@link Records::INVALIDATED}, so `core:archive` builds it again, without the marker. Only the period's archives of
+     * this plugin are marked invalidated, not the period's ranges or longer periods. A queued invalidation is not added
+     * again.
+     */
+    private function invalidateLongerPeriod(int $idSite, Period $period, Segment $segment): void
     {
         $this->model->updateArchiveAsInvalidated(
             ArchiveTableCreator::getNumericTable($period->getDateStart(), false) ?: null,
@@ -197,31 +299,6 @@ final class PartialArchives
             $segment,
             false,
             'Transitions'
-        );
-    }
-
-    /**
-     * Tells whether one of the periods is queued for, or in, archiving for all plugins or for this plugin.
-     *
-     * @param list<Period> $periods
-     */
-    public function isAnyQueuedForArchiving(int $idSite, array $periods, Segment $segment): bool
-    {
-        if (empty($periods)) {
-            return false;
-        }
-
-        $bind = [$idSite, Rules::getDoneFlagArchiveContainsAllPlugins($segment), Rules::getDoneFlagArchiveContainsOnePlugin($segment, 'Transitions')];
-        $periodConditions = [];
-        foreach ($periods as $period) {
-            $periodConditions[] = '(period = ? AND date1 = ? AND date2 = ?)';
-            array_push($bind, $period->getId(), $period->getDateStart()->toString(), $period->getDateEnd()->toString());
-        }
-
-        return (bool) Db::fetchOne(
-            'SELECT 1 FROM `' . Common::prefixTable('archive_invalidations') . '` WHERE idsite = ? AND name IN (?, ?)'
-            . ' AND (report IS NULL OR LENGTH(report) = 0) AND (' . implode(' OR ', $periodConditions) . ') LIMIT 1',
-            $bind
         );
     }
 

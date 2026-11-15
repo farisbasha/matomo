@@ -21,7 +21,6 @@ use Piwik\DataTable;
 use Piwik\DataTable\Row;
 use Piwik\Log\LoggerInterface;
 use Piwik\Metrics;
-use Piwik\Period;
 use Piwik\Period\Range;
 use Piwik\Plugins\Transitions\Model;
 use Piwik\Plugins\Transitions\PreprocessedPages\PartialArchives;
@@ -29,7 +28,6 @@ use Piwik\Plugins\Transitions\PreprocessedPages\Records;
 use Piwik\Plugins\Transitions\PreprocessedPages\Service;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsReader;
 use Piwik\RankingQuery;
-use Piwik\Segment;
 use Piwik\Tracker\Action;
 
 /**
@@ -189,31 +187,29 @@ class PageTransitions extends RecordBuilder
         // the records summed from a subperiod's archive marked invalidated aren't served either, until the period is
         // archived again once that subperiod is; 0 replaces the marker of the period's older archives
         $idSite = $this->getIdSite($archiveProcessor);
+        $segment = $params->getSegment();
+        $period = $params->getPeriod();
         $partialArchives = StaticContainer::get(PartialArchives::class);
-        $markedSubperiods = $this->getMarkedSubperiods($archive, $subperiods);
-        // the subperiods may hold partial archives the catch-up hasn't marked yet
-        $isCatchUpPending = $partialArchives->isCatchUpOnInvalidatedArchivesPending();
-        $isMarked = !empty($markedSubperiods)
-            || $isCatchUpPending
+        $isPageBuild = !empty($params->getArchiveOnlyReportAsArray());
+        $wasMarked = !empty($partialArchives->getMarkedPeriods($idSite, [$period], $segment));
+        if ($partialArchives->isCatchUpOnInvalidatedArchivesPending()) {
+            // the subperiods may hold partial archives the catch-up hasn't marked yet; it queues the period
+            $marker = PartialArchives::MARKED_WHILE_CATCH_UP_PENDING;
+        } elseif (
+            !empty($partialArchives->getMarkedPeriods($idSite, $subperiods, $segment))
             // the period's other pages are still read from its marked archive
-            || (!empty($params->getArchiveOnlyReportAsArray()) && $this->isPeriodMarked($params->getSegment(), $params->getPeriod(), $idSite));
-        $archiveProcessor->insertNumericRecord(Records::INVALIDATED, $isMarked ? 1 : 0);
-
-        // only once a marked subperiod is archived again can the period be archived without the marker
-        if ($isCatchUpPending || $partialArchives->isAnyQueuedForArchiving($idSite, $markedSubperiods, $params->getSegment())) {
-            $partialArchives->invalidateLongerPeriod($idSite, $params->getPeriod(), $params->getSegment());
+            || ($isPageBuild && $wasMarked)
+        ) {
+            $marker = 1;
+        } else {
+            $marker = 0;
         }
-    }
+        $archiveProcessor->insertNumericRecord(Records::INVALIDATED, $marker);
 
-    private function isPeriodMarked(Segment $segment, Period $period, int $idSite): bool
-    {
-        $archive = Archive::factory($segment, [$period], [$idSite], false, true);
-        if (!$archive instanceof Archive) {
-            return false;
+        // archived without the marker for all pages, so the longer periods built from it can be too
+        if ($marker === 0 && $wasMarked && !$isPageBuild) {
+            $partialArchives->queueMarkedLongerPeriods($idSite, $period, $segment);
         }
-        $archive->forceFetchingWithoutLaunchingArchiving();
-
-        return !empty($this->getMarkedSubperiods($archive, [$period]));
     }
 
     /**
@@ -244,24 +240,6 @@ class PageTransitions extends RecordBuilder
         return $daysWithVisits;
     }
 
-    /**
-     * Returns the periods whose records are read from an archive marked {@link Records::INVALIDATED}.
-     *
-     * @param list<Period> $periods
-     * @return list<Period>
-     */
-    private function getMarkedSubperiods(Archive $archive, array $periods): array
-    {
-        // read alone, as a value missing next to another is returned as 0
-        $markers = $archive->getNumeric([Records::INVALIDATED]);
-        $markers = is_array($markers) ? $markers : [];
-
-        return array_values(array_filter($periods, function (Period $period) use ($markers): bool {
-            $value = $this->toArray($markers[$period->getRangeString()] ?? null)[Records::INVALIDATED] ?? 0;
-
-            return is_numeric($value) && $value > 0;
-        }));
-    }
 
     /**
      * The log queries run for at most {@link PAGES_PER_QUERY} URLs at once, and each page's lists are written and freed
@@ -281,6 +259,16 @@ class PageTransitions extends RecordBuilder
         $idPagesByIdAction = [0 => []];
         foreach ($idActionsByPage as $idPage => $idAction) {
             $idPagesByIdAction[$idAction ?? 0][] = $idPage;
+        }
+
+        $params = $archiveProcessor->getParams();
+        if (empty($params->getArchiveOnlyReportAsArray())) {
+            // a day archived again for all pages replaces its marked partial archives, so the longer periods built
+            // from them can be archived without the marker too
+            $partialArchives = StaticContainer::get(PartialArchives::class);
+            if (!empty($partialArchives->getMarkedPeriods($idSite, [$params->getPeriod()], $params->getSegment()))) {
+                $partialArchives->queueMarkedLongerPeriods($idSite, $params->getPeriod(), $params->getSegment());
+            }
         }
 
         $numericRecords = [Records::DAYS_WITH_VISITS => $hasVisits ? 1 : 0];
