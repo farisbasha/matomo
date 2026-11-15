@@ -312,9 +312,11 @@ final class PartialArchives
                 array_push($bind, $row['idarchive'], $row['idsite'], $row['date1'], $row['date2'], $row['period'], $row['ts_archived'], Records::INVALIDATED);
             }
 
-            // the partial archive stays DONE_PARTIAL, so core deletes it once a newer archive replaces it
+            // the partial archive stays DONE_PARTIAL, so core deletes it once a newer archive replaces it; a longer
+            // period's archive already has the marker, as 0
             Db::query(
-                'INSERT IGNORE INTO `' . $table . '` (idarchive, idsite, date1, date2, period, ts_archived, name, value) VALUES ' . implode(',', $values),
+                'INSERT INTO `' . $table . '` (idarchive, idsite, date1, date2, period, ts_archived, name, value) VALUES ' . implode(',', $values)
+                . ' ON DUPLICATE KEY UPDATE value = 1',
                 $bind
             );
         }

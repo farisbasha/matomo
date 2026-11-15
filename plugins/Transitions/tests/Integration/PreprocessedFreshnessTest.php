@@ -745,6 +745,36 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     }
 
     /**
+     * The partial archives of a page's rebuild hold the marker as 0 for weeks, months and years; an erasure marks them.
+     */
+    public function testAnErasureMarksThePartialArchivesOfARebuiltPage(): void
+    {
+        $this->archiveAllPlugins(self::DAY);
+        $idPage = $this->selectPage(self::PAGE_URL);
+        foreach (['day', 'week', 'month'] as $period) {
+            $this->rebuildAsCoreArchive($idPage, $period, self::DAY);
+        }
+        $this->setBrowserArchiving(false);
+        foreach ([Week::PERIOD_ID => 'week', Month::PERIOD_ID => 'month'] as $periodId => $period) {
+            self::assertSame(1, $this->countPartialArchives($this->getPeriodStart($period), $periodId), $period);
+            self::assertSame(1, $this->request($period, self::DAY)['preprocessed'], $period);
+        }
+
+        // as a data subject's deletion does
+        StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [Date::factory(self::DAY)], 'day');
+
+        foreach ([Day::PERIOD_ID => 'day', Week::PERIOD_ID => 'week', Month::PERIOD_ID => 'month'] as $periodId => $period) {
+            self::assertSame(1, $this->countPartialArchives($this->getPeriodStart($period), $periodId, true), $period);
+            self::assertArrayNotHasKey('preprocessed', $this->request($period, self::DAY), $period);
+        }
+    }
+
+    private function getPeriodStart(string $period): string
+    {
+        return PeriodFactory::build($period, self::DAY)->getDateStart()->toString();
+    }
+
+    /**
      * The build of a longer period summed from a marked day queues it, so `core:archive` archives it again after the
      * day, and it and the periods built from it are served again.
      */
@@ -1334,6 +1364,27 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     /**
      * Archives the period as browser archiving does, with the page's records and the visits.
      */
+    /**
+     * Archives the page alone, as `core:archive` runs the rebuild scheduled when it is selected.
+     */
+    private function rebuildAsCoreArchive(int $idPage, string $period, string $date): void
+    {
+        $_GET['trigger'] = 'archivephp';
+        $_GET['pluginOnly'] = '1';
+        $_GET['requestedReport'] = Records::getRebuildReportName($idPage);
+        Cache::getTransientCache()->flushAll();
+
+        try {
+            $params = new Parameters(new Site(1), PeriodFactory::build($period, $date), new Segment('', [1]));
+            $params->setRequestedPlugin('Transitions');
+            $params->setArchiveOnlyReport(Records::getRebuildReportName($idPage));
+            (new ArchiveLoader($params))->prepareArchive('Transitions');
+        } finally {
+            unset($_GET['trigger'], $_GET['pluginOnly'], $_GET['requestedReport']);
+            Cache::getTransientCache()->flushAll();
+        }
+    }
+
     /**
      * Archives this plugin alone, as `core:archive` processes its invalidation.
      */
