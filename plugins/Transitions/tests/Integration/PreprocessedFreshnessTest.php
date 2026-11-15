@@ -843,26 +843,71 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     }
 
     /**
-     * A day held only by a partial archive has no archive core could invalidate, but core queues its invalidation.
+     * A day held only by a partial archive has no archive core could invalidate, but core queues its invalidation. Only
+     * the invalidations of all or this plugin's reports queued after a partial archive was built mark it.
      */
     public function testActivatingThePluginMarksThePartialArchivesOfPeriodsWithAQueuedInvalidation(): void
     {
         $this->selectPage(self::PAGE_URL);
         self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
         self::assertSame(0, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . " WHERE name = 'done'"));
+        Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
 
         // as core does, also queued invalidations of a single report, which mark nothing
         $queue = 'INSERT INTO ' . Common::prefixTable('archive_invalidations') . ' (name, idsite, date1, date2, period, ts_invalidated, status, report)'
             . ' VALUES (?, 1, ?, ?, 1, ?, 0, ?)';
-        Db::query($queue, ['done', self::DAY, self::DAY, Date::now()->getDatetime(), null]);
-        Db::query($queue, ['done.Transitions', '2010-03-20', '2010-03-20', Date::now()->getDatetime(), 'Transitions_1_pageviews']);
+        Db::query($queue, ['done', self::DAY, self::DAY, Date::now()->addPeriod(1, 'minute')->getDatetime(), null]);
+        // the partial archives below are built on 2010-03-21
+        Db::query($queue, ['done.Transitions', '2010-03-20', '2010-03-20', '2010-03-22 00:00:00', 'Transitions_1_pageviews']);
+        Db::query($queue, ['done', '2010-03-19', '2010-03-19', '2010-03-20 00:00:00', null]);
         $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-20', '2010-03-20', '');
+        $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-19', '2010-03-19', '');
 
         PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
         (new Tasks())->catchUpOnInvalidatedArchives();
 
         self::assertSame(1, $this->countPartialArchives(self::DAY, Day::PERIOD_ID, true));
         self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', ''));
+        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-19', ''));
+    }
+
+    /**
+     * An activation while the catch-up runs starts it again, so it also scans the tables it finished before.
+     */
+    public function testAnActivationWhileTheCatchUpRunsStartsItAgain(): void
+    {
+        $this->selectPage(self::PAGE_URL);
+        $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-20', '2010-03-20', '');
+        PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
+
+        $partialArchives = StaticContainer::get(PartialArchives::class);
+        $dao = new class ($partialArchives) extends PreprocessedPagesDao {
+            public function __construct(private readonly PartialArchives $partialArchives)
+            {
+            }
+
+            public function getSitesWithAnyPages(array $idSites): array
+            {
+                // deactivated, the period invalidated, and activated again while the catch-up runs
+                $this->partialArchives->scheduleCatchUpOnInvalidatedArchives();
+                Db::query(
+                    'INSERT INTO ' . Common::prefixTable('archive_invalidations') . " (name, idsite, date1, date2, period, ts_invalidated, status)
+                        VALUES ('done', 1, '2010-03-20', '2010-03-20', 1, '2010-03-22 00:00:00', 0)"
+                );
+
+                return [1];
+            }
+        };
+        (new PartialArchives($dao, new DataAccessModel()))->catchUpOnInvalidatedArchives();
+
+        // stopped at the first table, so the next run scans every table again
+        self::assertTrue($partialArchives->isCatchUpOnInvalidatedArchivesPending());
+        self::assertStringEndsWith(':-', (string) Option::get('Transitions.invalidatedArchivesCatchUp'));
+
+        (new Tasks())->catchUpOnInvalidatedArchives();
+
+        self::assertFalse($partialArchives->isCatchUpOnInvalidatedArchivesPending());
+        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', '', true));
     }
 
     /**
@@ -879,7 +924,7 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
                 [$date, $date, Date::now()->getDatetime()]
             );
         }
-        Option::set('Transitions.invalidatedArchivesCatchUp', Common::prefixTable('archive_numeric_2010_02'));
+        Option::set('Transitions.invalidatedArchivesCatchUp', 'token:' . Common::prefixTable('archive_numeric_2010_02'));
 
         (new Tasks())->catchUpOnInvalidatedArchives();
 
@@ -1282,14 +1327,14 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     /**
      * Archives the day for all plugins as browser archiving does, for example for another report.
      */
-    private function archiveAllPlugins(string $date): void
+    private function archiveAllPlugins(string $date, string $period = 'day'): void
     {
         $general = Config::getInstance()->General;
         $this->setBrowserArchiving(true);
         Cache::getTransientCache()->flushAll();
 
         try {
-            Archive::build(1, 'day', $date)->getNumeric('nb_visits');
+            Archive::build(1, $period, $date)->getNumeric('nb_visits');
         } finally {
             Config::getInstance()->General = $general;
             Cache::getTransientCache()->flushAll();

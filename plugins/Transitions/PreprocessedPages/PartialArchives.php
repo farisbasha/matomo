@@ -42,8 +42,8 @@ final class PartialArchives
     private const INVALIDATION_MARKER_OPTION_PREFIX = 'Transitions.invalidated_';
 
     /**
-     * Set while the catch-up on archives invalidated while the plugin was deactivated is pending, to the last numeric
-     * table it finished, or {@link CATCH_UP_NOT_STARTED}.
+     * Set while the catch-up on archives invalidated while the plugin was deactivated is pending, to a token of the
+     * activation, `:` and the last numeric table it finished, or {@link CATCH_UP_NOT_STARTED}.
      */
     private const CATCH_UP_OPTION = 'Transitions.invalidatedArchivesCatchUp';
 
@@ -106,7 +106,7 @@ final class PartialArchives
      */
     public function scheduleCatchUpOnInvalidatedArchives(): void
     {
-        Option::set(self::CATCH_UP_OPTION, self::CATCH_UP_NOT_STARTED, 1);
+        Option::set(self::CATCH_UP_OPTION, Common::getRandomString(16) . ':' . self::CATCH_UP_NOT_STARTED, 1);
     }
 
     public function isCatchUpOnInvalidatedArchivesPending(): bool
@@ -119,15 +119,17 @@ final class PartialArchives
      * of all or of this plugin's reports, if {@link scheduleCatchUpOnInvalidatedArchives()} was called. Those built
      * after the invalidation are marked too, so they aren't served until the period is archived again. It reads every
      * numeric row of the websites with pages, so it runs as a scheduled task, one table after the other, and continues
-     * after the last finished table if it was stopped.
+     * after the last finished table if it was stopped. If the plugin is activated again meanwhile, it stops, and the
+     * next run starts again.
      */
     public function catchUpOnInvalidatedArchives(): void
     {
         Option::clearCachedOption(self::CATCH_UP_OPTION);
-        $progress = Option::get(self::CATCH_UP_OPTION);
-        if (!is_string($progress)) {
+        $value = Option::get(self::CATCH_UP_OPTION);
+        if (!is_string($value) || !str_contains($value, ':')) {
             return;
         }
+        [$token, $progress] = explode(':', $value, 2);
 
         $idSites = $this->dao->getSitesWithAnyPages(array_values(array_map('intval', StaticContainer::get(SitesModel::class)->getSitesId())));
         $tables = empty($idSites) ? [] : ArchiveTableCreator::getTablesArchivesInstalled(ArchiveTableCreator::NUMERIC_TABLE);
@@ -144,22 +146,36 @@ final class PartialArchives
                     . ' AND (EXISTS (SELECT 1 FROM `' . $table . '` i WHERE i.idsite = p.idsite AND i.date1 = p.date1 AND i.date2 = p.date2'
                     . " AND i.period = p.period AND i.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND i.value = ?)"
                     . ' OR EXISTS (SELECT 1 FROM `' . Common::prefixTable('archive_invalidations') . '` q WHERE q.idsite = p.idsite'
-                    . ' AND q.date1 = p.date1 AND q.date2 = p.date2 AND q.period = p.period'
+                    . ' AND q.date1 = p.date1 AND q.date2 = p.date2 AND q.period = p.period AND q.ts_invalidated > p.ts_archived'
                     . " AND q.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND (q.report IS NULL OR LENGTH(q.report) = 0)))",
                     [ArchiveWriter::DONE_PARTIAL, ArchiveWriter::DONE_INVALIDATED]
                 );
                 $this->markArchives($table, $rows);
             }
 
-            $progress = $table;
-            Option::set(self::CATCH_UP_OPTION, $progress, 1);
+            $newValue = $token . ':' . $table;
+            if (!$this->replaceCatchUpProgress($value, $newValue)) {
+                return;
+            }
+            $value = $newValue;
         }
 
         // unless the plugin was activated again meanwhile
+        Option::delete(self::CATCH_UP_OPTION, $value);
+    }
+
+    /**
+     * Writes the catch-up's progress unless the plugin was activated again since it was read.
+     */
+    private function replaceCatchUpProgress(string $value, string $newValue): bool
+    {
+        $isReplaced = Db::query(
+            'UPDATE `' . Common::prefixTable('option') . '` SET option_value = ? WHERE option_name = ? AND option_value = ?',
+            [$newValue, self::CATCH_UP_OPTION, $value]
+        )->rowCount() > 0;
         Option::clearCachedOption(self::CATCH_UP_OPTION);
-        if (Option::get(self::CATCH_UP_OPTION) === $progress) {
-            Option::delete(self::CATCH_UP_OPTION);
-        }
+
+        return $isReplaced;
     }
 
     /**
