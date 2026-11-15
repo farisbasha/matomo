@@ -37,6 +37,7 @@
     <div
       v-if="hasLoaded && limitMessage"
       class="managePreprocessedPages__limitMessage"
+      tabindex="-1"
     >
       <Alert :severity="pages.length > maxPages ? 'warning' : 'info'">{{ limitMessage }}</Alert>
     </div>
@@ -120,6 +121,7 @@
               :title="translate('General_Remove')"
               :aria-labelledby="`${idPrefix}Remove${page.idpage} ${idPrefix}Url${page.idpage}`"
               :disabled="removingId !== null"
+              :data-state="removingId !== null ? 'disabled' : undefined"
               @click="confirmRemove(page)"
             >
               <span class="u-visuallyHidden">{{ translate('General_Remove') }}</span>
@@ -180,7 +182,7 @@
                 >
                   <span
                     class="managePreprocessedPages__suggestionUrl"
-                    :title="suggestion.url"
+                    :title="encodeHiddenCharacters(suggestion.url)"
                   >{{ readableUrl(suggestion.url) }}</span>
                   <span class="managePreprocessedPages__suggestionPageviews">
                     {{ formatNumber(suggestion.nb_hits) }}
@@ -195,6 +197,9 @@
           class="btn managePreprocessedPages__add"
           :disabled="isAddDisabled"
         >{{ translate('Transitions_AddPage') }}</button>
+        <div class="managePreprocessedPages__addProgress">
+          <ActivityIndicator :loading="isAdding" />
+        </div>
       </form>
 
       <div
@@ -268,7 +273,9 @@ import apiErrorText from '../apiErrorText';
 import {
   addedMessage,
   displayUrl,
+  encodeHiddenCharacters,
   readableUrl,
+  removedMessage,
   formatUtcDateTime,
   matchKey,
   pageKey,
@@ -612,9 +619,26 @@ export default defineComponent({
     },
     focusField() {
       this.$nextTick(() => {
-        (this.$el as HTMLElement).querySelector<HTMLElement>(
-          '.managePreprocessedPages__field input',
-        )?.focus();
+        this.focusFieldOrLimitMessage();
+      });
+    },
+    /** The URL field, or the limit message that took the form's place. */
+    focusFieldOrLimitMessage() {
+      (this.$el as HTMLElement).querySelector<HTMLElement>(
+        '.managePreprocessedPages__field input, .managePreprocessedPages__limitMessage',
+      )?.focus();
+    },
+    /**
+     * A focus lost while adding, as the button was disabled or the form went away with the limit
+     * reached, moves to the field or the limit message.
+     */
+    keepFocusAfterAdd() {
+      this.$nextTick(() => {
+        const focused = document.activeElement;
+
+        if (!focused || focused === document.body) {
+          this.focusFieldOrLimitMessage();
+        }
       });
     },
     /** A failed add may be due to another admin's change, so the list is read again. */
@@ -644,6 +668,7 @@ export default defineComponent({
         return this.loadPages(false);
       }).finally(() => {
         this.isAdding = false;
+        this.keepFocusAfterAdd();
       });
     },
     /**
@@ -652,7 +677,7 @@ export default defineComponent({
      */
     confirmRemove(page: PreprocessedPage) {
       this.pageToRemove = page;
-      this.removeIndex = this.pages.indexOf(page);
+      this.removeIndex = this.rowIndex(page);
       this.isRemoveDialogOpen = true;
     },
     removeConfirmed() {
@@ -686,12 +711,16 @@ export default defineComponent({
           return;
         }
 
-        this.focusField();
+        this.focusFieldOrLimitMessage();
       });
+    },
+    /** The page's row, found by its ID, as a reload replaces the page objects. */
+    rowIndex(page: PreprocessedPage): number {
+      return this.pages.findIndex((entry) => entry.idpage === page.idpage);
     },
     /** The list is read again also after a failure, which may be due to another admin's change. */
     remove(page: PreprocessedPage) {
-      const index = this.pages.indexOf(page);
+      const index = this.rowIndex(page);
       this.removingId = page.idpage;
       this.listError = '';
 
@@ -701,7 +730,7 @@ export default defineComponent({
         { createErrorNotification: false },
       ).then(
         () => {
-          this.showSuccess(translate('Transitions_StopPreprocessingHelp'));
+          this.showSuccess(removedMessage(page.url));
           return '';
         },
         (error) => apiErrorText(error),
@@ -722,9 +751,13 @@ export default defineComponent({
     readableUrl(url: string): string {
       return readableUrl(url);
     },
-    /** The stored URL, where the list shows it decoded. */
+    /** The stored URL, where the list shows it decoded; hidden characters stay encoded. */
     urlTitle(url: string): string|undefined {
-      return readableUrl(url) !== displayUrl(url) ? displayUrl(url) : undefined;
+      const stored = encodeHiddenCharacters(displayUrl(url));
+      return readableUrl(url) !== stored ? stored : undefined;
+    },
+    encodeHiddenCharacters(text: string): string {
+      return encodeHiddenCharacters(text);
     },
     formatNumber(value: number|string): string {
       return NumberFormatter.formatNumber(Number(value));

@@ -22,7 +22,11 @@ const state = vi.hoisted(() => ({
 vi.mock('CoreHome', async () => {
   const { translateStub } = await import('../TransitionsReport/testCoreHomeMock');
   return {
-    ActivityIndicator: { template: '<div class="activityIndicator" />', props: ['loading'] },
+    ActivityIndicator: {
+      name: 'ActivityIndicator',
+      template: '<div class="activityIndicator" />',
+      props: ['loading'],
+    },
     AjaxHelper: {
       fetch: (...args: unknown[]) => state.fetch(...args),
       post: (...args: unknown[]) => state.post(...args),
@@ -286,6 +290,15 @@ describe('Transitions/ManagePreprocessedPages', () => {
         .toContain('Transitions_StopPreprocessingConfirm:example.org/機能?q=a b&x=%E2');
     });
 
+    it('should keep control characters encoded in the title as in the text', async () => {
+      answer(() => [page(1, { url: 'https://example.org/a\u202Eb%E6%A9%9F' })]);
+      const wrapper = await mountPage();
+
+      const cell = wrapper.find('.managePreprocessedPages__url');
+      expect(cell.text()).toBe('https://example.org/a%E2%80%AEb機');
+      expect(cell.attributes('title')).toBe('https://example.org/a%E2%80%AEb%E6%A9%9F');
+    });
+
     it('should keep the newest list when reloads finish out of order', async () => {
       const pending: ((list: PreprocessedPage[]) => void)[] = [];
       state.fetch.mockImplementation((params: Record<string, unknown>) => {
@@ -432,11 +445,14 @@ describe('Transitions/ManagePreprocessedPages', () => {
       answer(() => list);
       state.post.mockImplementation(() => {
         list = pages(20);
-        return Promise.reject(new Error("This website's limit of pre-processed pages (20) is reached. Remove a page to add another one."));
+        return Promise.reject(new Error(
+          "This website's limit of pre-processed pages (20) is reached. Remove a page to add another one.",
+        ));
       });
-      const wrapper = await mountPage();
+      const wrapper = await mountPage({}, document.body);
 
       await typeUrl(wrapper, 'https://example.org/new');
+      (wrapper.find('.managePreprocessedPages__add').element as HTMLElement).focus();
       await wrapper.find('form').trigger('submit');
       await flushPromises();
 
@@ -448,6 +464,32 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.find('.managePreprocessedPages__addError').exists()).toBe(false);
       expect(wrapper.find('.managePreprocessedPages__limitMessage').text())
         .toBe('Transitions_PreprocessedPagesLimitReached:20');
+      // the focus was in the form; it moves to the message that took its place
+      expect(document.activeElement).toBe(wrapper.find('.managePreprocessedPages__limitMessage').element);
+
+      wrapper.unmount();
+    });
+
+    it('should show a loading indicator next to the button while adding', async () => {
+      let finishAdd: (value: unknown) => void = () => undefined;
+      answer(() => []);
+      state.post.mockReturnValue(new Promise((resolve) => {
+        finishAdd = resolve;
+      }));
+      const wrapper = await mountPage();
+      const indicator = () => wrapper.findAllComponents({ name: 'ActivityIndicator' })
+        .find((component) => component.element.closest('.managePreprocessedPages__addForm'));
+
+      await typeUrl(wrapper, 'https://example.org/new');
+      expect(indicator()!.props('loading')).toBe(false);
+
+      await wrapper.find('form').trigger('submit');
+      expect(indicator()!.props('loading')).toBe(true);
+      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
+
+      finishAdd({ idpage: 1 });
+      await flushPromises();
+      expect(indicator()!.props('loading')).toBe(false);
     });
 
     it.each([
@@ -746,7 +788,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:1|20');
       expect(state.notify).toHaveBeenCalledWith(expect.objectContaining({
-        message: 'Transitions_StopPreprocessingHelp',
+        message: 'Transitions_PreprocessedPageRemoved:example.org/page-1',
         context: 'success',
         type: 'toast',
       }));
@@ -828,6 +870,43 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.findAll('.managePreprocessedPages__row')).toHaveLength(1);
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:1|20');
+    });
+
+    it('should show the remove icons disabled, the CoreHome way, while a page is removed', async () => {
+      let finishRemove: (value: unknown) => void = () => undefined;
+      answer(() => [page(2), page(1)]);
+      state.post.mockReturnValue(new Promise((resolve) => {
+        finishRemove = resolve;
+      }));
+      const wrapper = await mountPage();
+      const states = () => wrapper.findAll('.managePreprocessedPages__remove')
+        .map((button) => [button.attributes('data-state'), button.attributes('disabled') !== undefined]);
+
+      expect(states()).toEqual([[undefined, false], [undefined, false]]);
+
+      await wrapper.find('.managePreprocessedPages__remove').trigger('click');
+      await answerDialog(wrapper, true);
+      expect(states()).toEqual([['disabled', true], ['disabled', true]]);
+
+      finishRemove({});
+      await flushPromises();
+      expect(states()).toEqual([[undefined, false], [undefined, false]]);
+    });
+
+    it('should move the focus to the limit message once the last page is removed and none can be added', async () => {
+      let list = [page(1)];
+      answer(() => list);
+      state.post.mockImplementation(() => {
+        list = [];
+        return Promise.resolve({});
+      });
+      const wrapper = await mountPage({ maxPages: 0 }, document.body);
+
+      await wrapper.find('.managePreprocessedPages__remove').trigger('click');
+      await answerDialog(wrapper, true);
+
+      expect(document.activeElement).toBe(wrapper.find('.managePreprocessedPages__limitMessage').element);
+      wrapper.unmount();
     });
 
     it('should keep the row and show the error when removing fails', async () => {

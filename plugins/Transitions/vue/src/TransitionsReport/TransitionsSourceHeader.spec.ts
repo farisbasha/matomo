@@ -538,7 +538,8 @@ describe('Transitions/TransitionsSourceHeader', () => {
       );
       expect(wrapper.find('.transitionsSourceHeader__toggle').text()).toContain('Transitions_PreprocessThisPage');
       // what happens to the data already prepared
-      expect(wrapper.find('.transitionsSourceHeader__message').text()).toBe('Transitions_StopPreprocessingHelp');
+      expect(wrapper.find('.transitionsSourceHeader__message').text())
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/page');
       expect(wrapper.find('.transitionsSourceHeader__usage').text())
         .toBe('Transitions_PreprocessedPagesUsage:11|20');
       // data already stored is still what this report shows

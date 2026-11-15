@@ -21,7 +21,12 @@ vi.mock('CoreHome', async () => {
   };
 });
 
-import { readableUrl, stopConfirmLabel } from './preprocessedPageUrls';
+import {
+  encodeHiddenCharacters,
+  readableUrl,
+  removedMessage,
+  stopConfirmLabel,
+} from './preprocessedPageUrls';
 
 describe('Transitions/preprocessedPageUrls', () => {
   describe('readableUrl', () => {
@@ -44,6 +49,20 @@ describe('Transitions/preprocessedPageUrls', () => {
       ['an HTML-encoded right-to-left override', 'https://example.org/&#8238;fdp.exe', 'https://example.org/%E2%80%AEfdp.exe'],
     ])('should keep %s encoded', (description, url, expected) => {
       expect(readableUrl(url)).toBe(expected);
+    });
+  });
+
+  describe('encodeHiddenCharacters', () => {
+    it('should encode only control and format characters', () => {
+      expect(encodeHiddenCharacters('https://example.org/a\u202Eb\u200Bc機%41'))
+        .toBe('https://example.org/a%E2%80%AEb%E2%80%8Bc機%41');
+    });
+  });
+
+  describe('removedMessage', () => {
+    it('should name the page as the confirmation does', () => {
+      expect(removedMessage('http://www.example.org/%E6%A9%9F'))
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/機');
     });
   });
 

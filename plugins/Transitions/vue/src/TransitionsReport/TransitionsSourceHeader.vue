@@ -123,7 +123,12 @@ import {
 } from 'CoreHome';
 import { TransitionsDataSource } from './types';
 import apiErrorText from '../apiErrorText';
-import { addedMessage, formatUtcDateTime, stopConfirmLabel } from '../preprocessedPageUrls';
+import {
+  addedMessage,
+  formatUtcDateTime,
+  removedMessage,
+  stopConfirmLabel,
+} from '../preprocessedPageUrls';
 
 /** Transitions.getPreprocessedPageStatus */
 export interface PreprocessedPageStatus {
@@ -457,7 +462,7 @@ export default defineComponent({
           idPage: null,
           used: Math.max(0, this.status.used - 1),
         };
-        this.message = translate('Transitions_StopPreprocessingHelp');
+        this.message = removedMessage(this.actionName);
         this.isSaving = false;
         this.focusToggle();
       }).catch((error) => {

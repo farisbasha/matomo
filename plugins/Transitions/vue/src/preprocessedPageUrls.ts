@@ -17,6 +17,13 @@ export function displayUrl(url: string): string {
 /** Control and format characters, eg bidi overrides and zero-width spaces, hide or reorder text. */
 const HIDDEN_CHARACTER = /[\p{Cc}\p{Cf}]/u;
 
+/** Text with its control and format characters percent-encoded, eg for a tooltip. */
+export function encodeHiddenCharacters(text: string): string {
+  return Array.from(text)
+    .map((char) => (HIDDEN_CHARACTER.test(char) ? encodeURIComponent(char) : char))
+    .join('');
+}
+
 /** The number of bytes of a UTF-8 sequence starting with the given byte, 0 if none does. */
 function utf8SequenceLength(byte: number): number {
   if (byte >= 0xC2 && byte <= 0xDF) {
@@ -73,18 +80,22 @@ function decodePercentRun(run: string): string {
  * only: the stored URL, which a suggestion or an add must match, stays encoded.
  */
 export function readableUrl(url: string): string {
-  return Array.from(displayUrl(url))
-    .map((char) => (HIDDEN_CHARACTER.test(char) ? encodeURIComponent(char) : char))
-    .join('')
-    .replace(/(%[0-9A-Fa-f]{2})+/g, decodePercentRun);
+  return encodeHiddenCharacters(displayUrl(url)).replace(/(%[0-9A-Fa-f]{2})+/g, decodePercentRun);
+}
+
+/** The page's name in a question or a message: readable, without scheme and `www.`. */
+function pageName(url: string): string {
+  return readableUrl(url).replace(/^https?:\/\/(www\.)?/i, '');
 }
 
 /** The question of the confirmation before a page is removed. */
 export function stopConfirmLabel(url: string): string {
-  return translate(
-    'Transitions_StopPreprocessingConfirm',
-    readableUrl(url).replace(/^https?:\/\/(www\.)?/i, ''),
-  );
+  return translate('Transitions_StopPreprocessingConfirm', pageName(url));
+}
+
+/** What happened after a page is removed, and what that means for its data. */
+export function removedMessage(url: string): string {
+  return translate('Transitions_PreprocessedPageRemoved', pageName(url));
 }
 
 /** What happens after a page is added, given the months its past data is rebuilt for. */

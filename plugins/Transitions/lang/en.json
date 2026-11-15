@@ -42,6 +42,7 @@
         "PreprocessedPageDuplicateHelp": "http://, https:// and www. variants count as the same page, and excluded query parameters are ignored.",
         "PreprocessedPageInvalidUrl": "Please enter a valid page URL starting with http:// or https://.",
         "PreprocessedPageNotSelected": "This page is not selected for pre-processed Transitions.",
+        "PreprocessedPageRemoved": "Pre-processing stopped for %s. Data already prepared stays available.",
         "PreprocessedPagesAddingDisabled": "No pages can be selected for pre-processed Transitions on this website.",
         "PreprocessedPagesBusy": "Another change to the pre-processed pages of this website is in progress. Please try again.",
         "PreprocessedPagesEmpty": "No pages selected yet. Add the pages your team analyses most, such as the home page, landing pages or checkout steps.",
