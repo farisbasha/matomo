@@ -409,7 +409,7 @@ describe('Transitions/TransitionsSourceHeader', () => {
     });
 
     it('should read the status again when adding fails, eg as another admin reached the limit', async () => {
-      state.post.mockRejectedValue(new Error('You can select at most 20 pages for pre-processed Transitions.'));
+      state.post.mockRejectedValue(new Error("This website's limit of pre-processed pages (20) is reached. Remove a page to add another one."));
       const wrapper = await mountHeader();
 
       state.fetch.mockResolvedValue(status({ used: 20 }));

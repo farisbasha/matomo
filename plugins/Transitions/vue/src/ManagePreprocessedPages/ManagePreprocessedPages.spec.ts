@@ -432,7 +432,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       answer(() => list);
       state.post.mockImplementation(() => {
         list = pages(20);
-        return Promise.reject(new Error('You can select at most 20 pages for pre-processed Transitions.'));
+        return Promise.reject(new Error("This website's limit of pre-processed pages (20) is reached. Remove a page to add another one."));
       });
       const wrapper = await mountPage();
 
