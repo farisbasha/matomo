@@ -143,7 +143,7 @@ class Model
                        AND fullarchive.period = partial.period
                        AND fullarchive.name = SUBSTRING_INDEX(partial.name, '.', 1)
                        AND fullarchive.value IN ($usableValues)
-                       AND fullarchive.ts_archived > partial.ts_archived
+                       AND fullarchive.ts_archived >= partial.ts_archived
                        AND fullarchive.idarchive > partial.idarchive
                      WHERE partial.idsite IN (" . implode(',', $idSitesOfChunk) . ")
                        AND partial.name LIKE 'done%.%'
@@ -536,9 +536,9 @@ class Model
 
         // the older archives of the same name, and the partial archives of its plugins (`<name>.<Plugin>`), which
         // readers ignore once a newer archive of all their plugins exists
-        // a partial of the same second is kept, as readers that compare ts_archived still take it
+        // a partial of the same second is older too, as its idarchive is lower
         $sql = "SELECT idarchive FROM `$numericTable` WHERE idsite = ? AND date1 = ? AND date2 = ? AND period = ?
-                   AND ((name = ? AND ts_archived <= ?) OR (name LIKE ? AND value = " . ArchiveWriter::DONE_PARTIAL . " AND ts_archived < ?))
+                   AND ((name = ? AND ts_archived <= ?) OR (name LIKE ? AND value = " . ArchiveWriter::DONE_PARTIAL . " AND ts_archived <= ?))
                    AND idarchive < ?";
         $partialNamePattern = addcslashes($name, '%_\\') . '.%';
 

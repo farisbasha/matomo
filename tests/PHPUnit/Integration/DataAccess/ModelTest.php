@@ -119,13 +119,16 @@ class ModelTest extends IntegrationTestCase
             // partial archive was still being built
             ['date1' => '2020-02-06', 'date2' => '2020-02-06', 'period' => Day::PERIOD_ID, 'name' => 'done.Plugin', 'value' => ArchiveWriter::DONE_PARTIAL, 'ts_archived' => '2020-02-07 01:00:00'],
             ['date1' => '2020-02-06', 'date2' => '2020-02-06', 'period' => Day::PERIOD_ID, 'name' => 'done', 'value' => ArchiveWriter::DONE_OK, 'ts_archived' => '2020-02-07 02:00:00'],
+            // 17, 18: also when both were archived in the same second
+            ['date1' => '2020-02-07', 'date2' => '2020-02-07', 'period' => Day::PERIOD_ID, 'name' => 'done.Plugin', 'value' => ArchiveWriter::DONE_PARTIAL, 'ts_archived' => '2020-02-08 01:00:00'],
+            ['date1' => '2020-02-07', 'date2' => '2020-02-07', 'period' => Day::PERIOD_ID, 'name' => 'done', 'value' => ArchiveWriter::DONE_OK, 'ts_archived' => '2020-02-08 01:00:00'],
         ]);
 
         $table = ArchiveTableCreator::getNumericTable(Date::factory('2020-02-03'), false);
         $ids = $this->model->getInvalidatedArchiveIdsSafeToDelete($table);
         sort($ids);
 
-        $this->assertEquals(['1', '2', '3', '10', '11', '15'], $ids);
+        $this->assertEquals(['1', '2', '3', '10', '11', '15', '17'], $ids);
     }
 
     public function testGetInvalidatedArchiveIdsSafeToDeletePurgesPartialArchivesOfAllSitesInChunks()

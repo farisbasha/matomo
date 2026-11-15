@@ -96,7 +96,7 @@ class ArchiveWriterTest extends IntegrationTestCase
             ['idarchive' => 3, 'name' => $segmentFlag . '.ExamplePlugin', 'value' => ArchiveWriter::DONE_PARTIAL, 'ts_archived' => '2020-02-02 03:44:44'] + $row,
             // built after the new archive started
             ['idarchive' => 4, 'name' => 'done.ExamplePlugin', 'value' => ArchiveWriter::DONE_PARTIAL, 'ts_archived' => '2020-04-05 03:00:01'] + $row,
-            // built in the same second, which readers comparing ts_archived still take
+            // started before the new archive, in the same second
             ['idarchive' => 5, 'name' => 'done.ExamplePlugin', 'value' => ArchiveWriter::DONE_PARTIAL, 'ts_archived' => '2020-04-05 03:00:00'] + $row,
         ]);
         $blobTable = ArchiveTableCreator::getBlobTable(Date::factory($date), true);
@@ -112,7 +112,7 @@ class ArchiveWriterTest extends IntegrationTestCase
 
         $remaining = array_values(array_unique(array_column($this->getAllColsOfAllNumericRows($date), 'idarchive')));
         sort($remaining);
-        $this->assertEquals([2, 3, 4, 5, 6], $remaining);
+        $this->assertEquals([2, 3, 4, 6], $remaining);
         $this->assertEquals(0, Db::fetchOne("SELECT COUNT(*) FROM `$blobTable` WHERE idarchive = 1"));
     }
 
