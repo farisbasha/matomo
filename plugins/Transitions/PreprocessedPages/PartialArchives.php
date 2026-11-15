@@ -111,13 +111,17 @@ final class PartialArchives
 
     public function isCatchUpOnInvalidatedArchivesPending(): bool
     {
+        // the plugin may have been activated again since this process read it
+        Option::clearCachedOption(self::CATCH_UP_OPTION);
+
         return Option::get(self::CATCH_UP_OPTION) !== false;
     }
 
     /**
      * Marks the partial archives of the periods and segments that have an invalidated archive, or a queued invalidation
      * of all or of this plugin's reports, if {@link scheduleCatchUpOnInvalidatedArchives()} was called. Those built
-     * after the invalidation are marked too, so they aren't served until the period is archived again. It reads every
+     * after the invalidation are marked too, so they aren't served until the period is archived again: core keeps the
+     * older time of a queued invalidation when it adds another one to it. It reads every
      * numeric row of the websites with pages, so it runs as a scheduled task, one table after the other, and continues
      * after the last finished table if it was stopped. If the plugin is activated again meanwhile, it stops, and the
      * next run starts again.
@@ -146,7 +150,7 @@ final class PartialArchives
                     . ' AND (EXISTS (SELECT 1 FROM `' . $table . '` i WHERE i.idsite = p.idsite AND i.date1 = p.date1 AND i.date2 = p.date2'
                     . " AND i.period = p.period AND i.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND i.value = ?)"
                     . ' OR EXISTS (SELECT 1 FROM `' . Common::prefixTable('archive_invalidations') . '` q WHERE q.idsite = p.idsite'
-                    . ' AND q.date1 = p.date1 AND q.date2 = p.date2 AND q.period = p.period AND q.ts_invalidated > p.ts_archived'
+                    . ' AND q.date1 = p.date1 AND q.date2 = p.date2 AND q.period = p.period'
                     . " AND q.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND (q.report IS NULL OR LENGTH(q.report) = 0)))",
                     [ArchiveWriter::DONE_PARTIAL, ArchiveWriter::DONE_INVALIDATED]
                 );

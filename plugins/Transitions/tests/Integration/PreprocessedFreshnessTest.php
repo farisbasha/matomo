@@ -925,32 +925,32 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     }
 
     /**
-     * A day held only by a partial archive has no archive core could invalidate, but core queues its invalidation. Only
-     * the invalidations of all or this plugin's reports queued after a partial archive was built mark it.
+     * A day held only by a partial archive has no archive core could invalidate, but core queues its invalidation, or
+     * adds it to one queued earlier, which keeps its older time. Queued invalidations of a single report mark nothing.
      */
     public function testActivatingThePluginMarksThePartialArchivesOfPeriodsWithAQueuedInvalidation(): void
     {
+        Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
+        // queued before the day's partial archive is built
+        $queue = 'INSERT INTO ' . Common::prefixTable('archive_invalidations') . ' (name, idsite, date1, date2, period, ts_invalidated, status, report)'
+            . ' VALUES (?, 1, ?, ?, 1, ?, 0, ?)';
+        Db::query($queue, ['done', self::DAY, self::DAY, '2010-03-07 00:00:00', null]);
         $this->selectPage(self::PAGE_URL);
         self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
         self::assertSame(0, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . " WHERE name = 'done'"));
-        Db::query('DELETE FROM ' . Common::prefixTable('archive_invalidations'));
 
-        // as core does, also queued invalidations of a single report, which mark nothing
-        $queue = 'INSERT INTO ' . Common::prefixTable('archive_invalidations') . ' (name, idsite, date1, date2, period, ts_invalidated, status, report)'
-            . ' VALUES (?, 1, ?, ?, 1, ?, 0, ?)';
-        Db::query($queue, ['done', self::DAY, self::DAY, Date::now()->addPeriod(1, 'minute')->getDatetime(), null]);
-        // the partial archives below are built on 2010-03-21
+        // a data subject's deletion while the plugin is deactivated, which core adds to the queued invalidation
+        (new DataAccessModel())->updateArchiveAsInvalidated(Common::prefixTable('archive_numeric_2010_03'), [1], [PeriodFactory::build('day', self::DAY)]);
+        self::assertSame(1, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_invalidations') . ' WHERE period = 1'));
+
         Db::query($queue, ['done.Transitions', '2010-03-20', '2010-03-20', '2010-03-22 00:00:00', 'Transitions_1_pageviews']);
-        Db::query($queue, ['done', '2010-03-19', '2010-03-19', '2010-03-20 00:00:00', null]);
         $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-20', '2010-03-20', '');
-        $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-19', '2010-03-19', '');
 
         PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
         (new Tasks())->catchUpOnInvalidatedArchives();
 
         self::assertSame(1, $this->countPartialArchives(self::DAY, Day::PERIOD_ID, true));
         self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', ''));
-        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-19', ''));
     }
 
     /**
