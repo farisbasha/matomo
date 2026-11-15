@@ -104,6 +104,9 @@ class Service
             }
 
             $maxPages = $this->getMaxPages($idSite);
+            if ($maxPages <= 0) {
+                throw new BadRequestException(Piwik::translate('Transitions_PreprocessedPagesAddingDisabled'));
+            }
             if ($this->dao->getNumPagesForSite($idSite) >= $maxPages) {
                 throw new BadRequestException(Piwik::translate('Transitions_PreprocessedPagesLimitReached', [(string) $maxPages]));
             }
