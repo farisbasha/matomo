@@ -14,22 +14,72 @@ export function displayUrl(url: string): string {
   return Matomo.helper.htmlDecode(url);
 }
 
-/**
- * The URL as the Pages report shows it, with percent-encoded UTF-8 decoded, eg `%E6%A9%9F` as `機`.
- * For display only: the stored URL, which a suggestion or an add must match, stays encoded.
- */
-export function readableUrl(url: string): string {
-  return displayUrl(url).replace(/(%[0-9A-Fa-f]{2})+/g, (encoded) => {
-    try {
-      return decodeURIComponent(encoded);
-    } catch (e) {
-      // not UTF-8
-      return encoded;
-    }
-  });
+/** Control and format characters, eg bidi overrides and zero-width spaces, hide or reorder text. */
+const HIDDEN_CHARACTER = /[\p{Cc}\p{Cf}]/u;
+
+/** The number of bytes of a UTF-8 sequence starting with the given byte, 0 if none does. */
+function utf8SequenceLength(byte: number): number {
+  if (byte >= 0xC2 && byte <= 0xDF) {
+    return 2;
+  }
+
+  if (byte >= 0xE0 && byte <= 0xEF) {
+    return 3;
+  }
+
+  if (byte >= 0xF0 && byte <= 0xF4) {
+    return 4;
+  }
+
+  return 0;
 }
 
-/** The question of the inline confirmation before a page is removed. */
+/** Decodes the valid UTF-8 sequences of a run of `%XX`; any other byte stays encoded. */
+function decodePercentRun(run: string): string {
+  const bytes = run.match(/%[0-9A-Fa-f]{2}/g) || [];
+  let result = '';
+  let index = 0;
+
+  while (index < bytes.length) {
+    const lead = parseInt(bytes[index].substring(1), 16);
+    const length = lead < 0x80 ? 1 : utf8SequenceLength(lead);
+    const sequence = bytes.slice(index, index + Math.max(1, length)).join('');
+    let decoded = '';
+
+    if (length && index + length <= bytes.length) {
+      try {
+        decoded = decodeURIComponent(sequence);
+      } catch (e) {
+        // not UTF-8
+      }
+    }
+
+    if (decoded && !HIDDEN_CHARACTER.test(decoded)) {
+      result += decoded;
+      index += length;
+    } else {
+      result += bytes[index];
+      index += 1;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * The URL for display, with percent-encoded UTF-8 decoded, eg `%E6%A9%9F` as `機`. Unlike the Pages
+ * report, `+` stays as it is and invalid bytes stay encoded rather than dropped. Control and format
+ * characters, eg a bidi override, are shown encoded so they can't reorder or hide text. For display
+ * only: the stored URL, which a suggestion or an add must match, stays encoded.
+ */
+export function readableUrl(url: string): string {
+  return Array.from(displayUrl(url))
+    .map((char) => (HIDDEN_CHARACTER.test(char) ? encodeURIComponent(char) : char))
+    .join('')
+    .replace(/(%[0-9A-Fa-f]{2})+/g, decodePercentRun);
+}
+
+/** The question of the confirmation before a page is removed. */
 export function stopConfirmLabel(url: string): string {
   return translate(
     'Transitions_StopPreprocessingConfirm',
