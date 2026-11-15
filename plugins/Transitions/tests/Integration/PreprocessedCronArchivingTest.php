@@ -25,6 +25,7 @@ use Piwik\DataAccess\ArchiveWriter;
 use Piwik\Date;
 use Piwik\Db;
 use Piwik\Log\LoggerInterface;
+use Piwik\Option;
 use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Piwik;
 use Piwik\Plugins\PrivacyManager\API as PrivacyManagerAPI;
@@ -105,6 +106,9 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
 
         Config::getInstance()->General['rearchive_reports_in_past_last_n_months'] = self::REARCHIVE_MONTHS;
         Config::getInstance()->General['enable_browser_archiving_triggering'] = 0;
+
+        // the previous run started before the invalidations of the test, which are queued at the fixed time
+        Option::set(CronArchive::OPTION_ARCHIVING_STARTED_TS, self::$now - 1);
     }
 
     /**
@@ -320,9 +324,9 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
     }
 
     /**
-     * R-A1, R-A3: runs stopped by --max-archives-to-process, which continue the shared list of websites, archive every
-     * other invalidation before any single report, and the following runs archive the single reports of every website:
-     * the added page's and another plugin's, re-archived as core updates do.
+     * R-A1, R-A3: runs stopped by --max-archives-to-process, which continue the shared list of websites: the first run
+     * archives every other invalidation it gets to before any single report, and the following runs archive the single
+     * reports of every website in its turn, the added page's and another plugin's, re-archived as core updates do.
      */
     public function testRunsStoppedByTheirLimitArchiveTheSingleReportsOfEveryWebsiteAfterTheOtherArchives(): void
     {
@@ -348,10 +352,10 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
                 }
             }
 
-            // within each run, the single reports follow every other archive
-            $firstReport = array_key_first(array_filter($processedByRun, fn($description) => str_starts_with($description, 'report ')));
-            if ($firstReport !== null) {
-                self::assertSame([], array_filter(array_slice($processedByRun, $firstReport), fn($description) => !str_starts_with($description, 'report ')), "run $runs");
+            // the first run defers the single reports, which were queued since the previous run started
+            if ($runs === 0) {
+                self::assertNotEmpty($processedByRun);
+                self::assertSame([], array_filter($processedByRun, fn($description) => str_starts_with($description, 'report ')));
             }
             $processed = array_merge($processed, $processedByRun);
             $runs++;
@@ -361,11 +365,10 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
         self::assertGreaterThan(2, $runs);
         self::assertSame(0, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_invalidations') . " WHERE report IS NOT NULL AND report <> ''"));
 
-        // the late visit was archived for all plugins on both websites before any single report
-        $firstReport = array_key_first(array_filter($processed, fn($description) => str_starts_with($description, 'report ')));
+        // the late visit was archived for all plugins on both websites
         foreach ([1, 2] as $idSite) {
             self::assertSame($visits[$idSite] + 1, $this->getStoredNumeric($idSite, 'done', 'nb_visits', 'day', $lateDay), "site $idSite");
-            self::assertLessThan($firstReport, array_search("$idSite day {$lateDay->toString()}", $processed, true), "site $idSite");
+            self::assertContains("$idSite day {$lateDay->toString()}", $processed);
             self::assertContains("report $idSite day {$lateDay->toString()}", $processed);
             self::assertNotNull($this->getStoredNumeric($idSite, 'done.Actions', 'Actions_hits', 'day', $lateDay), "site $idSite");
         }
@@ -375,9 +378,10 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
 
     /**
      * R-A1, R-A3: a run stopped by a signal, maintenance mode or a kill once it archived the other invalidations of the
-     * first website leaves its single reports to the run that continues the shared list of websites.
+     * first website leaves its single reports, which are then archived in the website's next turn, and the run that
+     * continues the shared list archives those of the next website in its turn.
      */
-    public function testARunStoppedAfterAWebsiteLeavesItsSingleReportsToTheRunThatContinuesTheList(): void
+    public function testARunStoppedAfterAWebsiteLeavesItsSingleReportsToItsNextTurn(): void
     {
         if (!extension_loaded('pcntl')) {
             self::markTestSkipped('pcntl is required');
@@ -404,7 +408,13 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
         $output = self::runCoreArchive();
         self::assertStringContainsString('Continuing ongoing archiving run', $output);
         self::assertStringNotContainsString('Start processing archives for site 1.', $output);
-        self::assertStringContainsString('Start processing single report archives for site 1.', $output);
+        self::assertStringNotContainsString('Start processing single report archives', $output);
+        self::assertEquals([['idsite' => 1]], Db::fetchAll($singleReportsOfSites));
+
+        // a new list
+        $output = self::runCoreArchive();
+        self::assertStringContainsString('Start processing archives for site 1.', $output);
+        self::assertStringNotContainsString('Start processing single report archives', $output);
         self::assertSame([], Db::fetchAll($singleReportsOfSites));
         self::assertGreaterThan(0, $this->getStoredNumeric(1, 'done.Transitions', Records::getRecordName($idPage, Records::PAGEVIEWS), 'month'));
     }

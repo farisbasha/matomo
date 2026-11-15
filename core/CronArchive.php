@@ -187,6 +187,11 @@ class CronArchive
 
     private $archivingStartingTime;
 
+    /**
+     * @var int|null the start of the previous run, if any
+     */
+    private $previousArchivingStartingTime = null;
+
     private $formatter;
 
     private $lastDbReset = false;
@@ -359,6 +364,9 @@ class CronArchive
         }
 
         // record archiving start time
+        Option::clearCachedOption(self::OPTION_ARCHIVING_STARTED_TS);
+        $previousStartTime = Option::get(self::OPTION_ARCHIVING_STARTED_TS);
+        $this->previousArchivingStartingTime = is_numeric($previousStartTime) ? (int) $previousStartTime : null;
         Option::set(self::OPTION_ARCHIVING_STARTED_TS, time());
 
         $allWebsites = APISitesManager::getInstance()->getAllSitesId();
@@ -433,7 +441,7 @@ class CronArchive
         );
 
         $queueConsumer->setMaxSitesToProcess($this->maxSitesToProcess);
-        $queueConsumer->setSiteIdsToArchive($this->allWebsites);
+        $queueConsumer->setPreviousRunStartTime($this->previousArchivingStartingTime);
 
         while (true) {
             if (null !== $this->signal) {

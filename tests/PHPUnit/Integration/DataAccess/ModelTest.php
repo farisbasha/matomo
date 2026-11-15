@@ -870,20 +870,21 @@ class ModelTest extends IntegrationTestCase
      *
      * @dataProvider getSingleReportInvalidations
      */
-    public function testGetNextInvalidatedArchiveFiltersSingleReportInvalidations(bool $singleReportInvalidations, array $expectedIdInvalidations)
+    public function testGetNextInvalidatedArchiveFiltersSingleReportInvalidations(bool $singleReportInvalidations, ?string $before, array $expectedIdInvalidations)
     {
         Fixture::createWebsite('2014-01-01 00:00:00');
 
-        $day = ['date1' => '2020-01-10', 'date2' => '2020-01-10', 'period' => Day::PERIOD_ID, 'name' => 'done.Actions'];
+        $day = ['date1' => '2020-01-10', 'date2' => '2020-01-10', 'period' => Day::PERIOD_ID, 'name' => 'done.Actions', 'ts_invalidated' => '2020-01-11 00:00:00'];
         $this->insertInvalidations([
             $day + ['report' => null],
             $day + ['report' => ''],
             $day + ['report' => ' '],
             $day + ['report' => 'Actions_hits'],
+            ['ts_invalidated' => '2020-01-10 23:59:59', 'report' => 'Actions_hits'] + $day,
         ]);
 
         $archiveFilter = new ArchiveFilter();
-        $archiveFilter->setSingleReportInvalidations($singleReportInvalidations);
+        $archiveFilter->setSingleReportInvalidations($singleReportInvalidations, $before);
 
         $invalidations = $this->model->getNextInvalidatedArchive(1, '2030-01-01 00:00:00', null, false, $archiveFilter);
         $this->assertEqualsCanonicalizing($expectedIdInvalidations, array_column($invalidations, 'idinvalidation'));
@@ -894,8 +895,10 @@ class ModelTest extends IntegrationTestCase
 
     public function getSingleReportInvalidations(): iterable
     {
-        yield 'single reports' => [true, [3, 4]];
-        yield 'others' => [false, [1, 2]];
+        yield 'single reports' => [true, null, [3, 4, 5]];
+        yield 'others' => [false, null, [1, 2]];
+        yield 'others and single reports invalidated before' => [false, '2020-01-11 00:00:00', [1, 2, 5]];
+        yield 'the time applies to the others only' => [true, '2020-01-11 00:00:00', [3, 4, 5]];
     }
 
     public function testDeleteInvalidationsForDeletedSites()

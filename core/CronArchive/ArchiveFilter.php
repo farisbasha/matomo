@@ -68,6 +68,12 @@ class ArchiveFilter
      */
     private $singleReportInvalidations = null;
 
+    /**
+     * With $singleReportInvalidations false, the single reports invalidated before this time are processed too.
+     * @var string|null
+     */
+    private $singleReportInvalidationsBefore = null;
+
     public function __construct()
     {
         $this->setRestrictToPeriods('');
@@ -138,6 +144,7 @@ class ArchiveFilter
         if (
             $this->singleReportInvalidations !== null
             && in_array($archive['report'] ?? null, [null, ''], true) === $this->singleReportInvalidations
+            && !$this->isSingleReportInvalidatedBefore($archive)
         ) {
             return $this->singleReportInvalidations ? 'not a single report' : 'single reports are archived after the other archives';
         }
@@ -271,15 +278,29 @@ class ArchiveFilter
     /**
      * @param bool|null $singleReportInvalidations true for invalidations of a single report only, false for the others
      *                                             only, null for all
+     * @param string|null $before with false, the single reports invalidated before this time (UTC) are processed too
      */
-    public function setSingleReportInvalidations(?bool $singleReportInvalidations): void
+    public function setSingleReportInvalidations(?bool $singleReportInvalidations, ?string $before = null): void
     {
         $this->singleReportInvalidations = $singleReportInvalidations;
+        $this->singleReportInvalidationsBefore = $singleReportInvalidations === false ? $before : null;
     }
 
     public function getSingleReportInvalidations(): ?bool
     {
         return $this->singleReportInvalidations;
+    }
+
+    public function getSingleReportInvalidationsBefore(): ?string
+    {
+        return $this->singleReportInvalidationsBefore;
+    }
+
+    private function isSingleReportInvalidatedBefore(array $archive): bool
+    {
+        return $this->singleReportInvalidationsBefore !== null
+            && isset($archive['ts_invalidated'])
+            && $archive['ts_invalidated'] < $this->singleReportInvalidationsBefore;
     }
 
     /**
