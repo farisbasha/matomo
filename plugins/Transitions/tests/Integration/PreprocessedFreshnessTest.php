@@ -53,6 +53,7 @@ use Piwik\Plugins\Transitions\PreprocessedPages\Records;
 use Piwik\Plugins\Transitions\PreprocessedPages\Service;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsLoader;
 use Piwik\Plugins\Transitions\PreprocessedPages\StoredRecordsReader;
+use Piwik\Plugins\Transitions\Tasks;
 use Piwik\Segment;
 use Piwik\Site;
 use Piwik\Tests\Fixtures\SomeVisitsManyPageviewsWithTransitions;
@@ -777,8 +778,9 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
     }
 
     /**
-     * Core invalidates archives without telling the plugin while it is deactivated, so its activation marks the partial
-     * archives of the periods with an invalidated archive.
+     * Core invalidates archives without telling the plugin while it is deactivated, so its activation schedules a task
+     * that marks the partial archives of the periods with an invalidated archive or a queued invalidation, and no
+     * stored records are served until it has run.
      */
     public function testActivatingThePluginMarksThePartialArchivesOfPeriodsInvalidatedMeanwhile(): void
     {
@@ -797,9 +799,63 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
 
         PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
 
+        // nothing is served until the task has run
+        self::assertTrue(StaticContainer::get(PartialArchives::class)->isCatchUpOnInvalidatedArchivesPending());
+        self::assertSame(0, $this->countPartialArchives(self::DAY, Day::PERIOD_ID, true));
+        self::assertArrayNotHasKey('preprocessed', $this->request('day', self::DAY));
+
+        (new Tasks())->catchUpOnInvalidatedArchives();
+
+        self::assertFalse(StaticContainer::get(PartialArchives::class)->isCatchUpOnInvalidatedArchivesPending());
         self::assertSame(1, $this->countPartialArchives(self::DAY, Day::PERIOD_ID, true));
         self::assertArrayNotHasKey('preprocessed', $this->request('day', self::DAY));
         self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', ''));
+    }
+
+    /**
+     * A day held only by a partial archive has no archive core could invalidate, but core queues its invalidation.
+     */
+    public function testActivatingThePluginMarksThePartialArchivesOfPeriodsWithAQueuedInvalidation(): void
+    {
+        $this->selectPage(self::PAGE_URL);
+        self::assertSame(1, $this->request('day', self::DAY)['preprocessed']);
+        self::assertSame(0, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('archive_numeric_2010_03') . " WHERE name = 'done'"));
+
+        // as core does, also queued invalidations of a single report, which mark nothing
+        $queue = 'INSERT INTO ' . Common::prefixTable('archive_invalidations') . ' (name, idsite, date1, date2, period, ts_invalidated, status, report)'
+            . ' VALUES (?, 1, ?, ?, 1, ?, 0, ?)';
+        Db::query($queue, ['done', self::DAY, self::DAY, Date::now()->getDatetime(), null]);
+        Db::query($queue, ['done.Transitions', '2010-03-20', '2010-03-20', Date::now()->getDatetime(), 'Transitions_1_pageviews']);
+        $this->insertPartialArchive(1, Day::PERIOD_ID, '2010-03-20', '2010-03-20', '');
+
+        PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
+        (new Tasks())->catchUpOnInvalidatedArchives();
+
+        self::assertSame(1, $this->countPartialArchives(self::DAY, Day::PERIOD_ID, true));
+        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', ''));
+    }
+
+    /**
+     * A catch-up that was stopped continues after the last table it finished.
+     */
+    public function testTheCatchUpOnInvalidatedArchivesContinuesAfterTheLastFinishedTable(): void
+    {
+        $this->selectPage(self::PAGE_URL);
+        foreach (['2010-02-20', '2010-03-20'] as $date) {
+            $this->insertPartialArchive(1, Day::PERIOD_ID, $date, $date, '');
+            Db::query(
+                'INSERT INTO ' . Common::prefixTable('archive_invalidations') . " (idarchive, name, idsite, date1, date2, period, ts_invalidated, status)
+                    VALUES (NULL, 'done', 1, ?, ?, 1, ?, 0)",
+                [$date, $date, Date::now()->getDatetime()]
+            );
+        }
+        Option::set('Transitions.invalidatedArchivesCatchUp', Common::prefixTable('archive_numeric_2010_02'));
+
+        (new Tasks())->catchUpOnInvalidatedArchives();
+
+        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-02-20', ''));
+        self::assertSame(1, $this->countPartialArchivesOf(1, Day::PERIOD_ID, '2010-03-20', '', true));
+        self::assertFalse(StaticContainer::get(PartialArchives::class)->isCatchUpOnInvalidatedArchivesPending());
     }
 
     public function testADayBuildDuringAnInvalidationOfTheDayIsNotKept(): void

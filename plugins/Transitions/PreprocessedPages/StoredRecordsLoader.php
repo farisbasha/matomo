@@ -104,7 +104,7 @@ final class StoredRecordsLoader
         }
         $site = new Site($idSite);
         // records of another segment may predate its last change, as nothing builds them
-        if (!Records::isBuiltForSegment($idSite, $segment)) {
+        if (!Records::isBuiltForSegment($idSite, $segment) || $this->partialArchives->isCatchUpOnInvalidatedArchivesPending()) {
             return null;
         }
         $this->applyRememberedInvalidations($site, $periods);

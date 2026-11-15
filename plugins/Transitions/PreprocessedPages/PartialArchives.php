@@ -41,6 +41,14 @@ final class PartialArchives
 {
     private const INVALIDATION_MARKER_OPTION_PREFIX = 'Transitions.invalidated_';
 
+    /**
+     * Set while the catch-up on archives invalidated while the plugin was deactivated is pending, to the last numeric
+     * table it finished, or {@link CATCH_UP_NOT_STARTED}.
+     */
+    private const CATCH_UP_OPTION = 'Transitions.invalidatedArchivesCatchUp';
+
+    private const CATCH_UP_NOT_STARTED = '-';
+
     private const IDARCHIVES_PER_QUERY = 1000;
 
     private const SITES_PER_QUERY = 100;
@@ -93,29 +101,64 @@ final class PartialArchives
     }
 
     /**
-     * Marks the partial archives of the periods and segments that have an invalidated archive, as core invalidates
-     * archives without telling this plugin while it is deactivated, see
-     * {@link \Piwik\Plugins\Transitions\Transitions::activate()}. Those built after the invalidation are marked
-     * too, and are built again like the others.
+     * Core invalidates archives without telling this plugin while it is deactivated, so its activation schedules
+     * {@link catchUpOnInvalidatedArchives()}. No stored records are served until it has run.
      */
-    public function invalidateWhereArchivesAreInvalidated(): void
+    public function scheduleCatchUpOnInvalidatedArchives(): void
     {
-        $idSites = $this->dao->getSitesWithAnyPages(array_values(array_map('intval', StaticContainer::get(SitesModel::class)->getSitesId())));
-        if (empty($idSites)) {
+        Option::set(self::CATCH_UP_OPTION, self::CATCH_UP_NOT_STARTED, 1);
+    }
+
+    public function isCatchUpOnInvalidatedArchivesPending(): bool
+    {
+        return Option::get(self::CATCH_UP_OPTION) !== false;
+    }
+
+    /**
+     * Marks the partial archives of the periods and segments that have an invalidated archive, or a queued invalidation
+     * of all or of this plugin's reports, if {@link scheduleCatchUpOnInvalidatedArchives()} was called. Those built
+     * after the invalidation are marked too, so they aren't served until the period is archived again. It reads every
+     * numeric row of the websites with pages, so it runs as a scheduled task, one table after the other, and continues
+     * after the last finished table if it was stopped.
+     */
+    public function catchUpOnInvalidatedArchives(): void
+    {
+        Option::clearCachedOption(self::CATCH_UP_OPTION);
+        $progress = Option::get(self::CATCH_UP_OPTION);
+        if (!is_string($progress)) {
             return;
         }
 
-        foreach (ArchiveTableCreator::getTablesArchivesInstalled(ArchiveTableCreator::NUMERIC_TABLE) as $table) {
+        $idSites = $this->dao->getSitesWithAnyPages(array_values(array_map('intval', StaticContainer::get(SitesModel::class)->getSitesId())));
+        $tables = empty($idSites) ? [] : ArchiveTableCreator::getTablesArchivesInstalled(ArchiveTableCreator::NUMERIC_TABLE);
+        sort($tables);
+        foreach ($tables as $table) {
+            if ($progress !== self::CATCH_UP_NOT_STARTED && strcmp($table, $progress) <= 0) {
+                continue;
+            }
+
             foreach (array_chunk($idSites, self::SITES_PER_QUERY) as $idSitesOfChunk) {
                 $rows = Db::fetchAll(
                     'SELECT p.idarchive, p.idsite, p.date1, p.date2, p.period, p.ts_archived FROM `' . $table . '` p'
                     . ' WHERE p.idsite IN (' . implode(',', $idSitesOfChunk) . ") AND p.name LIKE 'done%.Transitions' AND p.value = ?"
-                    . ' AND EXISTS (SELECT 1 FROM `' . $table . '` i WHERE i.idsite = p.idsite AND i.date1 = p.date1 AND i.date2 = p.date2'
-                    . " AND i.period = p.period AND i.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND i.value = ?)",
+                    . ' AND (EXISTS (SELECT 1 FROM `' . $table . '` i WHERE i.idsite = p.idsite AND i.date1 = p.date1 AND i.date2 = p.date2'
+                    . " AND i.period = p.period AND i.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND i.value = ?)"
+                    . ' OR EXISTS (SELECT 1 FROM `' . Common::prefixTable('archive_invalidations') . '` q WHERE q.idsite = p.idsite'
+                    . ' AND q.date1 = p.date1 AND q.date2 = p.date2 AND q.period = p.period'
+                    . " AND q.name IN (SUBSTRING_INDEX(p.name, '.', 1), p.name) AND (q.report IS NULL OR LENGTH(q.report) = 0)))",
                     [ArchiveWriter::DONE_PARTIAL, ArchiveWriter::DONE_INVALIDATED]
                 );
                 $this->markArchives($table, $rows);
             }
+
+            $progress = $table;
+            Option::set(self::CATCH_UP_OPTION, $progress, 1);
+        }
+
+        // unless the plugin was activated again meanwhile
+        Option::clearCachedOption(self::CATCH_UP_OPTION);
+        if (Option::get(self::CATCH_UP_OPTION) === $progress) {
+            Option::delete(self::CATCH_UP_OPTION);
         }
     }
 
