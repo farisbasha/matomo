@@ -10,6 +10,13 @@ vi.mock('CoreHome', async () => {
   return {
     Matomo: {
       helper: {
+        // as piwikHelper.htmlEntities
+        htmlEntities: (value: string) => value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/{{/g, '{&#8291;{'),
         htmlDecode: (value: string) => {
           const textArea = document.createElement('textarea');
           textArea.innerHTML = value;
@@ -25,6 +32,7 @@ import {
   encodeHiddenCharacters,
   readableUrl,
   removedMessage,
+  removedMessageHtml,
   stopConfirmLabel,
 } from './preprocessedPageUrls';
 
@@ -37,6 +45,8 @@ describe('Transitions/preprocessedPageUrls', () => {
       ['an invalid byte encoded, the rest of its run decoded', 'https://example.org/%C3%A9%FF%C3%A9', 'https://example.org/é%FFé'],
       ['a truncated sequence encoded', 'https://example.org/%E6%A9', 'https://example.org/%E6%A9'],
       ['HTML entities decoded', 'https://example.org/?a=1&amp;b=%3Cx%3E', 'https://example.org/?a=1&b=<x>'],
+      ['entities decoded once', 'https://example.org/?a=&amp;sect;&amp;amp;', 'https://example.org/?a=&sect;&amp;'],
+      ['a raw ampersand that starts like an entity as it is', 'https://example.org/?a=1&section=2&copy=3', 'https://example.org/?a=1&section=2&copy=3'],
     ])('should show %s', (description, url, expected) => {
       expect(readableUrl(url)).toBe(expected);
     });
@@ -63,6 +73,30 @@ describe('Transitions/preprocessedPageUrls', () => {
     it('should name the page as the confirmation does', () => {
       expect(removedMessage('http://www.example.org/%E6%A9%9F'))
         .toBe('Transitions_PreprocessedPageRemoved:example.org/機');
+    });
+  });
+
+  describe('removedMessageHtml', () => {
+    it.each([
+      ['as stored, HTML-encoded', 'http://example.org/%3Cimg%20src%3Dx%3E?a=1&amp;section=2'],
+      ['with a raw ampersand', 'http://example.org/%3Cimg%20src%3Dx%3E?a=1&section=2'],
+    ])('should escape a decoded page name with markup and a query string, %s', (_, url) => {
+      const message = removedMessageHtml(url);
+      expect(message).toBe(
+        'Transitions_PreprocessedPageRemoved:example.org/&lt;img src=x&gt;?a=1&amp;section=2',
+      );
+
+      // rendered as HTML, as a notification does: the name shows once decoded, without markup
+      const container = document.createElement('div');
+      container.innerHTML = message;
+      expect(container.querySelector('img')).toBeNull();
+      expect(container.textContent)
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/<img src=x>?a=1&section=2');
+    });
+
+    it('should keep the plain text message unescaped for text interpolation', () => {
+      expect(removedMessage('http://example.org/%3Cimg%20src%3Dx%3E?a=1&amp;section=2'))
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/<img src=x>?a=1&section=2');
     });
   });
 

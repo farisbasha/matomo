@@ -275,7 +275,7 @@ import {
   displayUrl,
   encodeHiddenCharacters,
   readableUrl,
-  removedMessage,
+  removedMessageHtml,
   formatUtcDateTime,
   matchKey,
   pageKey,
@@ -690,6 +690,7 @@ export default defineComponent({
         this.focusRemoveButton(this.removeIndex);
       }
     },
+    /** The message is rendered as HTML, so any text from a URL in it must be escaped. */
     showSuccess(message: string) {
       NotificationsStore.show({
         id: 'TransitionsPreprocessedPages',
@@ -730,7 +731,7 @@ export default defineComponent({
         { createErrorNotification: false },
       ).then(
         () => {
-          this.showSuccess(removedMessage(page.url));
+          this.showSuccess(removedMessageHtml(page.url));
           return '';
         },
         (error) => apiErrorText(error),

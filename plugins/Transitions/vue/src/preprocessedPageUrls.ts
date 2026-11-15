@@ -9,9 +9,18 @@ import { Matomo, NumberFormatter, translate } from 'CoreHome';
 
 const SCHEME_AND_WWW = /^(https?:\/\/)?(www\.)?/i;
 
-/** URLs come as the tracker stores them, with query values HTML-encoded; shown as text. */
+/**
+ * A complete HTML entity. A raw `&` in a query, eg `&section=`, starts none, though a browser
+ * would read `&sect` as one.
+ */
+const HTML_ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi;
+
+/**
+ * URLs come as the tracker stores them, with query values HTML-encoded; shown as text. Only
+ * complete entities are decoded, once.
+ */
 export function displayUrl(url: string): string {
-  return Matomo.helper.htmlDecode(url);
+  return url.replace(HTML_ENTITY, (entity) => Matomo.helper.htmlDecode(entity));
 }
 
 /** Control and format characters, eg bidi overrides and zero-width spaces, hide or reorder text. */
@@ -93,9 +102,17 @@ export function stopConfirmLabel(url: string): string {
   return translate('Transitions_StopPreprocessingConfirm', pageName(url));
 }
 
-/** What happened after a page is removed, and what that means for its data. */
+/** What happened after a page is removed, and what that means for its data; plain text. */
 export function removedMessage(url: string): string {
   return translate('Transitions_PreprocessedPageRemoved', pageName(url));
+}
+
+/**
+ * The same as HTML, eg for a notification, which renders its message as HTML. The decoded name may
+ * contain markup and entities, so it is escaped.
+ */
+export function removedMessageHtml(url: string): string {
+  return translate('Transitions_PreprocessedPageRemoved', Matomo.helper.htmlEntities(pageName(url)));
 }
 
 /** What happens after a page is added, given the months its past data is rebuilt for. */

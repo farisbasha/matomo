@@ -40,6 +40,13 @@ vi.mock('CoreHome', async () => {
     Matomo: {
       idSite: 1,
       helper: {
+        // as piwikHelper.htmlEntities
+        htmlEntities: (value: string) => value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/{{/g, '{&#8291;{'),
         htmlDecode: (value: string) => {
           const textArea = document.createElement('textarea');
           textArea.innerHTML = value;
@@ -907,6 +914,35 @@ describe('Transitions/ManagePreprocessedPages', () => {
 
       expect(document.activeElement).toBe(wrapper.find('.managePreprocessedPages__limitMessage').element);
       wrapper.unmount();
+    });
+
+    it('should escape a page name with markup in the removal notification, which renders HTML', async () => {
+      const url = 'http://example.org/%3Cimg%20src%3Dx%3E?a=1&amp;section=2';
+      let list = [page(1, { url })];
+      answer(() => list);
+      state.post.mockImplementation(() => {
+        list = [];
+        return Promise.resolve({});
+      });
+      const wrapper = await mountPage();
+
+      // shown as text, decoded, in the list and the dialog
+      expect(wrapper.find('.managePreprocessedPages__url').text())
+        .toBe('http://example.org/<img src=x>?a=1&section=2');
+      await wrapper.find('.managePreprocessedPages__remove').trigger('click');
+      expect(dialogTitle(wrapper))
+        .toBe('Transitions_StopPreprocessingConfirm:example.org/<img src=x>?a=1&section=2');
+      expect(wrapper.find('img').exists()).toBe(false);
+
+      await answerDialog(wrapper, true);
+      const { message } = state.notify.mock.calls[0][0];
+      expect(message)
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/&lt;img src=x&gt;?a=1&amp;section=2');
+      const rendered = document.createElement('div');
+      rendered.innerHTML = message;
+      expect(rendered.querySelector('img')).toBeNull();
+      expect(rendered.textContent)
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/<img src=x>?a=1&section=2');
     });
 
     it('should keep the row and show the error when removing fails', async () => {

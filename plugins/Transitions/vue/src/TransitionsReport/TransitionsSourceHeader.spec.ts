@@ -546,6 +546,21 @@ describe('Transitions/TransitionsSourceHeader', () => {
       expect(wrapper.find('.transitionsSourceHeader__badge').text()).toBe('Transitions_PreprocessedBadge');
     });
 
+    it('should show a page name with markup as text in the message after stopping', async () => {
+      state.fetch.mockResolvedValue(status({ selected: true, idPage: 3 }));
+      state.post.mockResolvedValue({});
+      const wrapper = await mountHeader({
+        actionName: 'http://example.org/%3Cimg%20src%3Dx%3E?a=1&amp;section=2',
+      });
+
+      await wrapper.find('.transitionsSourceHeader__toggle').trigger('click');
+      await answerDialog(wrapper, true);
+
+      expect(wrapper.find('.transitionsSourceHeader__message').text())
+        .toBe('Transitions_PreprocessedPageRemoved:example.org/<img src=x>?a=1&section=2');
+      expect(wrapper.find('img').exists()).toBe(false);
+    });
+
     it('should render a URL with markup as text in the confirmation', async () => {
       const url = 'https://example.org/<img src=x onerror=alert(1)>';
       state.fetch.mockResolvedValue(status({ selected: true, idPage: 3 }));
