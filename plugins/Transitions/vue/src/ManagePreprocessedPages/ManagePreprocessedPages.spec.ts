@@ -5,12 +5,18 @@
  * @license https://www.gnu.org/licenses/gpl-3.0.html GPL v3 or later
  */
 
-import { flushPromises, mount, VueWrapper } from '@vue/test-utils';
+import {
+  DOMWrapper,
+  flushPromises,
+  mount,
+  VueWrapper,
+} from '@vue/test-utils';
 
 // Hoisted so the mock factories, which vitest lifts above this file's imports, can reach them.
 const state = vi.hoisted(() => ({
   fetch: vi.fn(),
   post: vi.fn(),
+  notify: vi.fn(),
 }));
 
 vi.mock('CoreHome', async () => {
@@ -37,6 +43,15 @@ vi.mock('CoreHome', async () => {
         },
       },
     },
+    MatomoDialog: {
+      name: 'MatomoDialog',
+      props: ['modelValue'],
+      emits: ['yes', 'closeEnd', 'update:modelValue'],
+      template: '<div class="matomoDialog"><slot /></div>',
+    },
+    NotificationsStore: {
+      show: (...args: unknown[]) => state.notify(...args),
+    },
     NumberFormatter: {
       formatNumber: (value: number) => String(value),
     },
@@ -51,7 +66,7 @@ vi.mock('CorePluginsAdmin', () => ({
     name: 'Field',
     template: '<input class="fieldInput" :value="modelValue" '
       + '@input="$emit(\'update:modelValue\', $event.target.value)" />',
-    props: ['uicontrol', 'name', 'modelValue', 'title', 'fullWidth', 'uiControlAttributes'],
+    props: ['uicontrol', 'name', 'modelValue', 'title', 'fullWidth', 'uiControlAttributes', 'autocomplete'],
     emits: ['update:modelValue'],
   },
 }));
@@ -108,6 +123,35 @@ function listRequests() {
   return state.fetch.mock.calls.filter(([params]) => params.method === 'Transitions.getPreprocessedPages');
 }
 
+/** Matomo's confirmation dialog: whether it is open, and its content. */
+function dialogOf(wrapper: VueWrapper) {
+  return wrapper.findComponent({ name: 'MatomoDialog' });
+}
+
+/** Answers Matomo's confirmation dialog, then lets it close. */
+async function answerDialog(wrapper: VueWrapper, yes: boolean) {
+  const dialog = dialogOf(wrapper);
+  expect(dialog.props('modelValue')).toBe(true);
+
+  if (yes) {
+    dialog.vm.$emit('yes');
+  }
+
+  dialog.vm.$emit('update:modelValue', false);
+  dialog.vm.$emit('closeEnd');
+  await flushPromises();
+}
+
+/** A cell's value, without the label shown on a phone. */
+function cellValue(cell: DOMWrapper<Element>): string {
+  const label = cell.find('.managePreprocessedPages__cellLabel');
+  return cell.text().substring(label.exists() ? label.text().length : 0).trim();
+}
+
+function dialogTitle(wrapper: VueWrapper): string {
+  return wrapper.find('.managePreprocessedPages__dialogTitle').text();
+}
+
 async function typeUrl(wrapper: VueWrapper, url: string) {
   await wrapper.find('.fieldInput').setValue(url);
   await flushPromises();
@@ -117,6 +161,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
   beforeEach(() => {
     state.fetch.mockReset();
     state.post.mockReset();
+    state.notify.mockReset();
   });
 
   afterEach(() => {
@@ -139,9 +184,12 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const rows = wrapper.findAll('.managePreprocessedPages__row');
       expect(rows.map((row) => row.find('.managePreprocessedPages__url').text()))
         .toEqual(['https://example.org/b', 'https://example.org/a']);
-      expect(rows[0].find('.managePreprocessedPages__date').text())
+      expect(cellValue(rows[0].find('.managePreprocessedPages__date')))
         .toBe('Transitions_DateTimeUtc:2025-03-10 09:14');
-      expect(rows[0].find('.managePreprocessedPages__addedBy').text()).toBe('admin');
+      expect(cellValue(rows[0].find('.managePreprocessedPages__addedBy'))).toBe('admin');
+      // the column names, for a phone, where the header is hidden
+      expect(rows[0].findAll('.managePreprocessedPages__cellLabel').map((label) => label.text()))
+        .toEqual(['Transitions_ColumnDateAdded', 'Transitions_ColumnAddedBy']);
 
       const unknown = rows[1].find('.managePreprocessedPages__unknownUser');
       expect(unknown.text()).toBe('General_Unknown');
@@ -164,10 +212,10 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const wrapper = await mountPage();
 
       const cells = wrapper.findAll('.managePreprocessedPages__addedBy');
-      expect(cells[0].text()).toBe('Transitions_AddedBySuperUser');
+      expect(cellValue(cells[0])).toBe('Transitions_AddedBySuperUser');
       expect(cells[0].find('.managePreprocessedPages__unknownUser').exists()).toBe(false);
       expect(cells[1].find('.managePreprocessedPages__unknownUser').text()).toBe('General_Unknown');
-      expect(cells[2].text()).toBe('admin');
+      expect(cellValue(cells[2])).toBe('admin');
     });
 
     it('should render URLs with markup as text', async () => {
@@ -179,7 +227,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.find('img').exists()).toBe(false);
 
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      expect(wrapper.find('.managePreprocessedPages__confirmText').text())
+      expect(dialogTitle(wrapper))
         .toContain('example.org/"><img src=x onerror=alert(1)>');
       expect(wrapper.find('img').exists()).toBe(false);
     });
@@ -205,8 +253,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       // nothing is known about the list, so it isn't shown as empty and nothing can be added
       expect(wrapper.find('.managePreprocessedPages__usage').exists()).toBe(false);
       expect(wrapper.find('.managePreprocessedPages__table').isVisible()).toBe(false);
-      await typeUrl(wrapper, 'https://example.org/new');
-      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
+      expect(wrapper.find('.managePreprocessedPages__addForm').exists()).toBe(false);
     });
 
     it('should show stored URLs decoded, as text', async () => {
@@ -217,7 +264,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.find('x').exists()).toBe(false);
 
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      expect(wrapper.find('.managePreprocessedPages__confirmText').text())
+      expect(dialogTitle(wrapper))
         .toContain('Transitions_StopPreprocessingConfirm:example.org/a?b=<x>&c=1');
     });
 
@@ -235,7 +282,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(cells[1].attributes('title')).toBeUndefined();
 
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      expect(wrapper.find('.managePreprocessedPages__confirmText').text())
+      expect(dialogTitle(wrapper))
         .toContain('Transitions_StopPreprocessingConfirm:example.org/機能?q=a b&x=%E2');
     });
 
@@ -262,8 +309,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       await wrapper.find('form').trigger('submit');
       await flushPromises();
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
       expect(pending).toHaveLength(2);
 
       // the newer reload lands first
@@ -280,39 +326,34 @@ describe('Transitions/ManagePreprocessedPages', () => {
     it('should say that adding is turned off with a limit of 0', async () => {
       answer(() => pages(2));
       const wrapper = await mountPage({ maxPages: 0 });
-      await typeUrl(wrapper, 'https://example.org/new');
 
       expect(wrapper.find('.managePreprocessedPages__limitMessage').text())
         .toBe('Transitions_PreprocessedPagesAddingDisabled');
-      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
+      expect(wrapper.find('.managePreprocessedPages__addForm').exists()).toBe(false);
+      expect(wrapper.find('.managePreprocessedPages__hint').exists()).toBe(false);
     });
 
-    it('should block adding when the limit is reached', async () => {
+    it('should hide the add form when the limit is reached', async () => {
       answer(() => pages(20));
       const wrapper = await mountPage();
-      await typeUrl(wrapper, 'https://example.org/new');
 
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:20|20');
       expect(wrapper.find('.managePreprocessedPages__meterFill').attributes('style')).toContain('width: 100%');
       expect(wrapper.find('.managePreprocessedPages__limitMessage').text())
         .toBe('Transitions_PreprocessedPagesLimitReached:20');
-      expect(wrapper.find('.managePreprocessedPages__limitMessage').classes()).toContain('alert-info');
-      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
-
-      await wrapper.find('form').trigger('submit');
-      expect(state.post).not.toHaveBeenCalled();
+      expect(wrapper.find('.managePreprocessedPages__limitMessage .alert').classes()).toContain('alert-info');
+      expect(wrapper.find('.managePreprocessedPages__addForm').exists()).toBe(false);
     });
 
     it('should explain a limit lowered below the number of pages', async () => {
       answer(() => pages(25));
       const wrapper = await mountPage();
-      await typeUrl(wrapper, 'https://example.org/new');
 
       expect(wrapper.find('.managePreprocessedPages__limitMessage').text())
         .toBe('Transitions_PreprocessedPagesOverLimit:25|20|6');
-      expect(wrapper.find('.managePreprocessedPages__limitMessage').classes()).toContain('alert-warning');
-      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
+      expect(wrapper.find('.managePreprocessedPages__limitMessage .alert').classes()).toContain('alert-warning');
+      expect(wrapper.find('.managePreprocessedPages__addForm').exists()).toBe(false);
 
       // a progress bar can't go past its maximum
       const meter = wrapper.find('.managePreprocessedPages__meter');
@@ -346,6 +387,12 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:2|20');
       expect((wrapper.find('.fieldInput').element as HTMLInputElement).value).toBe('');
+      // when the data appears, as a success notification like other admin pages
+      expect(state.notify).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Transitions_PreprocessedPageAddedRebuild:6',
+        context: 'success',
+        type: 'toast',
+      }));
     });
 
     it('should explain a duplicate inline and read the list again', async () => {
@@ -361,15 +408,15 @@ describe('Transitions/ManagePreprocessedPages', () => {
         .toBe('Transitions_PreprocessedPageAlreadySelected');
       expect(wrapper.find('.managePreprocessedPages__duplicateHelp').text())
         .toBe('Transitions_PreprocessedPageDuplicateHelp');
-      expect(wrapper.find('.managePreprocessedPages__addError').classes()).toContain('alert-danger');
+      expect(wrapper.find('.managePreprocessedPages__addError .alert').classes()).toContain('alert-danger');
       expect(listRequests()).toHaveLength(2);
 
       // the field is marked invalid and described by the error, then the hint
       const field = wrapper.findComponent({ name: 'Field' });
       const errorId = wrapper.find('.managePreprocessedPages__addError [role="alert"]').attributes('id');
       const hintId = wrapper.find('.managePreprocessedPages__hint').attributes('id');
+      expect(field.props('autocomplete')).toBe('off');
       expect(field.props('uiControlAttributes')).toEqual({
-        autocomplete: 'off',
         'aria-describedby': `${errorId} ${hintId}`,
         'aria-invalid': 'true',
       });
@@ -393,27 +440,38 @@ describe('Transitions/ManagePreprocessedPages', () => {
       await wrapper.find('form').trigger('submit');
       await flushPromises();
 
-      expect(wrapper.find('.managePreprocessedPages__addError').text())
-        .toBe('You can select at most 20 pages for pre-processed Transitions.');
+      // the form goes away with the limit reached, and the limit message says why
       expect(wrapper.findAll('.managePreprocessedPages__row')).toHaveLength(20);
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:20|20');
-      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeDefined();
-      expect((wrapper.find('.fieldInput').element as HTMLInputElement).value).toBe('https://example.org/new');
+      expect(wrapper.find('.managePreprocessedPages__addForm').exists()).toBe(false);
+      expect(wrapper.find('.managePreprocessedPages__addError').exists()).toBe(false);
+      expect(wrapper.find('.managePreprocessedPages__limitMessage').text())
+        .toBe('Transitions_PreprocessedPagesLimitReached:20');
     });
 
-    it('should show other API errors without the duplicate note', async () => {
+    it.each([
+      ['an invalid URL', 'Transitions_PreprocessedPageInvalidUrl', 'true'],
+      ['a concurrent change', 'Transitions_PreprocessedPagesBusy', 'false'],
+      ['a network failure', 'General_ErrorRequest', 'false'],
+    ])('should show %s without the duplicate note, marking the field invalid only for the URL', async (
+      _,
+      message,
+      isInvalid,
+    ) => {
       answer(() => []);
-      state.post.mockRejectedValue(new Error('Please enter a valid page URL starting with http:// or https://.'));
+      state.post.mockRejectedValue(new Error(message));
       const wrapper = await mountPage();
 
       await typeUrl(wrapper, 'example.org/a');
       await wrapper.find('form').trigger('submit');
       await flushPromises();
 
-      expect(wrapper.find('.managePreprocessedPages__addError').text())
-        .toBe('Please enter a valid page URL starting with http:// or https://.');
+      expect(wrapper.find('.managePreprocessedPages__addError').text()).toBe(message);
       expect(wrapper.find('.managePreprocessedPages__duplicateHelp').exists()).toBe(false);
+      expect(wrapper.findComponent({ name: 'Field' }).props('uiControlAttributes')['aria-invalid'])
+        .toBe(isInvalid);
+      expect(state.notify).not.toHaveBeenCalled();
     });
 
     const POOL = [
@@ -479,9 +537,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       ));
       const wrapper = await mountPage(props);
 
-      await wrapper.find('.managePreprocessedPages__field').trigger('focusin');
-      await typeUrl(wrapper, 'example.org/a');
-
+      expect(wrapper.find('.managePreprocessedPages__field').exists()).toBe(false);
       expect(poolRequests()).toHaveLength(0);
     });
 
@@ -545,8 +601,13 @@ describe('Transitions/ManagePreprocessedPages', () => {
 
       await typeUrl(wrapper, typed);
 
-      expect(wrapper.findAll('.managePreprocessedPages__suggestionUrl').map((url) => url.text()))
-        .toEqual(['https://example.org/caf%C3%A9']);
+      // shown decoded, as in the list, with the stored URL as title; that is what a pick adds
+      const urls = wrapper.findAll('.managePreprocessedPages__suggestionUrl');
+      expect(urls.map((url) => url.text())).toEqual(['https://example.org/café']);
+      expect(urls[0].attributes('title')).toBe('https://example.org/caf%C3%A9');
+      await wrapper.find('.managePreprocessedPages__suggestion').trigger('click');
+      expect((wrapper.find('.fieldInput').element as HTMLInputElement).value)
+        .toBe('https://example.org/caf%C3%A9');
     });
 
     it('should keep a malformed percent sign as typed', async () => {
@@ -651,7 +712,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
   });
 
   describe('removing', () => {
-    it('should remove a page only after the inline confirmation', async () => {
+    it('should remove a page only after Matomo\'s confirmation dialog', async () => {
       let list = [page(2), page(1)];
       answer(() => list);
       state.post.mockImplementation(() => {
@@ -661,18 +722,20 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const wrapper = await mountPage();
 
       await wrapper.findAll('.managePreprocessedPages__remove')[1].trigger('click');
-      const confirming = wrapper.find('.managePreprocessedPages__row--confirming');
-      expect(confirming.text()).toContain('Transitions_StopPreprocessingConfirm:example.org/page-1');
-      expect(confirming.text()).toContain('Transitions_StopPreprocessingHelp');
+      expect(dialogOf(wrapper).props('modelValue')).toBe(true);
+      const dialog = dialogOf(wrapper).find('.ui-confirm').element;
+      expect(dialogTitle(wrapper)).toBe('Transitions_StopPreprocessingConfirm:example.org/page-1');
+      expect(dialog.textContent).toContain('Transitions_StopPreprocessingHelp');
+      expect(Array.from(dialog.querySelectorAll('input'))
+        .map((input) => [input.getAttribute('role'), input.value]))
+        .toEqual([['yes', 'General_Yes'], ['no', 'General_No']]);
 
-      await wrapper.find('.managePreprocessedPages__cancel').trigger('click');
-      expect(wrapper.find('.managePreprocessedPages__row--confirming').exists()).toBe(false);
+      await answerDialog(wrapper, false);
       expect(wrapper.findAll('.managePreprocessedPages__row')).toHaveLength(2);
       expect(state.post).not.toHaveBeenCalled();
 
       await wrapper.findAll('.managePreprocessedPages__remove')[1].trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(state.post).toHaveBeenCalledWith(
         { method: 'Transitions.removePreprocessedPage', idSite: 1 },
@@ -682,9 +745,14 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(wrapper.findAll('.managePreprocessedPages__row')).toHaveLength(1);
       expect(wrapper.find('.managePreprocessedPages__usageLabel').text())
         .toBe('Transitions_PreprocessedPagesUsage:1|20');
+      expect(state.notify).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Transitions_StopPreprocessingHelp',
+        context: 'success',
+        type: 'toast',
+      }));
     });
 
-    it('should name each remove button and the confirmation by the page', async () => {
+    it('should name each remove button by the page', async () => {
       answer(() => [page(2), page(1)]);
       const wrapper = await mountPage();
 
@@ -693,11 +761,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
         .map((id) => wrapper.find(`[id="${id}"]`).text());
       expect(names).toEqual(['General_Remove', 'https://example.org/page-1']);
 
-      await button.trigger('click');
-      const group = wrapper.find('.managePreprocessedPages__confirm');
-      expect(group.attributes('role')).toBe('group');
-      expect(wrapper.find(`[id="${group.attributes('aria-labelledby')}"]`).text())
-        .toBe('Transitions_StopPreprocessingConfirm:example.org/page-1');
+      expect(button.attributes('title')).toBe('General_Remove');
     });
 
     it('should move the focus back to the remove button, or to the one now in its place', async () => {
@@ -711,17 +775,21 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const removeButtons = () => wrapper.findAll('.managePreprocessedPages__remove');
 
       await removeButtons()[1].trigger('click');
-      await flushPromises();
-      expect(document.activeElement).toBe(wrapper.find('.managePreprocessedPages__cancel').element);
-
-      await wrapper.find('.managePreprocessedPages__cancel').trigger('click');
-      await flushPromises();
+      (document.activeElement as HTMLElement).blur();
+      await answerDialog(wrapper, false);
       expect(document.activeElement).toBe(removeButtons()[1].element);
 
+      // removed while the dialog is still closing: the row is focused once it has closed
       await removeButtons()[1].trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
+      (document.activeElement as HTMLElement).blur();
+      dialogOf(wrapper).vm.$emit('yes');
       await flushPromises();
       expect(wrapper.findAll('.managePreprocessedPages__row')).toHaveLength(2);
+      expect(document.activeElement).toBe(document.body);
+
+      dialogOf(wrapper).vm.$emit('update:modelValue', false);
+      dialogOf(wrapper).vm.$emit('closeEnd');
+      await flushPromises();
       expect(document.activeElement).toBe(removeButtons()[1].element);
 
       wrapper.unmount();
@@ -737,8 +805,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const wrapper = await mountPage({}, document.body);
 
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(document.activeElement).toBe(wrapper.find('.fieldInput').element);
       wrapper.unmount();
@@ -754,8 +821,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const wrapper = await mountPage();
 
       await wrapper.findAll('.managePreprocessedPages__remove')[1].trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(wrapper.find('.managePreprocessedPages__error').text())
         .toBe('This page is not selected for pre-processed Transitions.');
@@ -770,8 +836,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       const wrapper = await mountPage();
 
       await wrapper.find('.managePreprocessedPages__remove').trigger('click');
-      await wrapper.find('.managePreprocessedPages__stop').trigger('click');
-      await flushPromises();
+      await answerDialog(wrapper, true);
 
       expect(wrapper.find('.managePreprocessedPages__error').text())
         .toBe('This page is not selected for pre-processed Transitions.');

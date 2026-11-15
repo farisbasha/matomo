@@ -66,6 +66,16 @@ describe("TransitionsPreprocessedPages", function () {
         await page.waitForFunction(() => !document.querySelector('.managePreprocessedPages__add').disabled);
     }
 
+    /** Clicks a button of Matomo's open confirmation dialog. */
+    async function clickDialogButton(text)
+    {
+        await page.waitForSelector('.modal.open', { visible: true });
+        await page.evaluate((text) => {
+            $('.modal.open .modal-footer a:contains(' + text + ')').click();
+        }, text);
+        await page.waitForFunction(() => !document.querySelector('.modal.open'));
+    }
+
     /** The ribbon layer measures the rows in an animation frame after they render. */
     async function waitForRibbons()
     {
@@ -124,15 +134,15 @@ describe("TransitionsPreprocessedPages", function () {
         expect((await rowUrls()).length).to.equal(3);
     });
 
-    it('should remove a page after the inline confirmation', async function () {
+    it('should remove a page after the confirmation dialog', async function () {
         await page.evaluate(() => {
             $('.managePreprocessedPages__row:contains("page3.html") .managePreprocessedPages__remove').click();
         });
-        await page.waitForSelector('.managePreprocessedPages__confirm');
-        expect(await textOf('.managePreprocessedPages__confirmText'))
-            .to.contain('Stop pre-processing example.org/page3.html?');
+        await page.waitForSelector('.modal.open', { visible: true });
+        expect(await textOf('.modal.open .managePreprocessedPages__dialogTitle'))
+            .to.equal('Stop pre-processing example.org/page3.html?');
 
-        await page.click('.managePreprocessedPages__stop');
+        await clickDialogButton('Yes');
         await page.waitForFunction(() => document.querySelectorAll('.managePreprocessedPages__row').length === 2);
 
         expect(await rowUrls()).to.deep.equal([
@@ -141,16 +151,13 @@ describe("TransitionsPreprocessedPages", function () {
         ]);
     });
 
-    it('should fit a phone screen with the remove confirmation open', async function () {
+    it('should fit the list of pages to a phone screen', async function () {
         await page.webpage.setViewport({ width: 375, height: 812 });
 
         try {
             await page.goto(manageUrl);
             await page.waitForNetworkIdle();
             await page.waitForSelector('.managePreprocessedPages__row');
-
-            await page.click('.managePreprocessedPages__remove');
-            await page.waitForSelector('.managePreprocessedPages__confirm');
 
             const layout = await page.evaluate(() => {
                 const isVisible = (selector) => {
@@ -168,14 +175,12 @@ describe("TransitionsPreprocessedPages", function () {
                 return {
                     scrollWidth: document.documentElement.scrollWidth,
                     innerWidth: window.innerWidth,
-                    cancelVisible: isVisible('.managePreprocessedPages__cancel'),
-                    stopVisible: isVisible('.managePreprocessedPages__stop'),
+                    removeVisible: isVisible('.managePreprocessedPages__remove'),
                 };
             });
 
             expect(layout.scrollWidth).to.be.at.most(layout.innerWidth);
-            expect(layout.cancelVisible).to.equal(true);
-            expect(layout.stopVisible).to.equal(true);
+            expect(layout.removeVisible).to.equal(true);
 
             // no row or button under the mouse, so no hover state in the capture
             await page.mouse.move(-10, -10);
@@ -214,9 +219,9 @@ describe("TransitionsPreprocessedPages", function () {
         expect(await textOf('.transitionsSourceHeader__badge')).to.equal('Raw data');
 
         await page.click('.transitionsSourceHeader__toggle');
-        await page.waitForSelector('.transitionsSourceHeader__confirm');
-        await page.click('.transitionsSourceHeader__stop');
+        await clickDialogButton('Yes');
         await waitForText('.transitionsSourceHeader__toggle', 'Pre-process this page');
         expect(await textOf('.transitionsSourceHeader__usage')).to.equal('2 of 20 pages selected');
+        expect(await textOf('.transitionsSourceHeader__message')).to.contain('Data already prepared stays available');
     });
 });

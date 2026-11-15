@@ -34,30 +34,33 @@
       </div>
     </div>
 
-    <Alert
+    <div
       v-if="hasLoaded && limitMessage"
       class="managePreprocessedPages__limitMessage"
-      :severity="pages.length > maxPages ? 'warning' : 'info'"
-    >{{ limitMessage }}</Alert>
-
-    <Alert
-      v-if="listError"
-      severity="danger"
     >
-      <div
-        class="managePreprocessedPages__error"
-        role="alert"
-      >{{ listError }}</div>
-    </Alert>
+      <Alert :severity="pages.length > maxPages ? 'warning' : 'info'">{{ limitMessage }}</Alert>
+    </div>
 
-    <ActivityIndicator :loading="isLoading" />
+    <div
+      v-if="listError"
+      class="managePreprocessedPages__listError"
+    >
+      <Alert severity="danger">
+        <div
+          class="managePreprocessedPages__error"
+          role="alert"
+        >{{ listError }}</div>
+      </Alert>
+    </div>
+
+    <ActivityIndicator :loading="isLoading || removingId !== null" />
 
     <table
       v-show="hasLoaded"
       class="managePreprocessedPages__table"
       v-content-table
     >
-      <thead>
+      <thead class="managePreprocessedPages__head">
         <tr>
           <th>{{ translate('Actions_ColumnPageURL') }}</th>
           <th>{{ translate('Transitions_ColumnDateAdded') }}</th>
@@ -67,8 +70,11 @@
           </th>
         </tr>
       </thead>
-      <tbody>
-        <tr v-if="!pages.length">
+      <tbody class="managePreprocessedPages__body">
+        <tr
+          v-if="!pages.length"
+          class="managePreprocessedPages__emptyRow"
+        >
           <td
             colspan="4"
             class="managePreprocessedPages__empty"
@@ -78,74 +84,47 @@
           v-for="page in pages"
           :key="page.idpage"
           class="managePreprocessedPages__row"
-          :class="{ 'managePreprocessedPages__row--confirming': confirmingId === page.idpage }"
         >
           <td
-            v-if="confirmingId === page.idpage"
-            colspan="4"
-          >
-            <div
-              class="managePreprocessedPages__confirm"
-              role="group"
-              :aria-labelledby="`${idPrefix}Confirm${page.idpage}`"
-            >
-              <div class="managePreprocessedPages__confirmText">
-                <strong :id="`${idPrefix}Confirm${page.idpage}`">{{ confirmLabel(page.url) }}</strong>
-                {{ translate('Transitions_StopPreprocessingHelp') }}
-              </div>
-              <div class="managePreprocessedPages__confirmActions">
-                <button
-                  type="button"
-                  class="btn-flat managePreprocessedPages__cancel"
-                  :disabled="removingId !== null"
-                  @click="cancelRemove(page)"
-                >{{ translate('General_Cancel') }}</button>
-                <button
-                  type="button"
-                  class="btn managePreprocessedPages__stop"
-                  :disabled="removingId !== null"
-                  @click="remove(page)"
-                >{{ translate('Transitions_StopPreprocessing') }}</button>
-              </div>
-            </div>
+            :id="`${idPrefix}Url${page.idpage}`"
+            class="managePreprocessedPages__url"
+            :title="urlTitle(page.url)"
+          >{{ readableUrl(page.url) }}</td>
+          <td class="managePreprocessedPages__date">
+            <span class="managePreprocessedPages__cellLabel">
+              {{ translate('Transitions_ColumnDateAdded') }}
+            </span>
+            {{ formatDate(page.created_date) }}
           </td>
-          <template v-else>
-            <td
-              :id="`${idPrefix}Url${page.idpage}`"
-              class="managePreprocessedPages__url"
-              :title="urlTitle(page.url)"
-            >{{ readableUrl(page.url) }}</td>
-            <td
-              class="managePreprocessedPages__date"
-              :data-label="translate('Transitions_ColumnDateAdded')"
-            >{{ formatDate(page.created_date) }}</td>
-            <td
-              class="managePreprocessedPages__addedBy"
-              :data-label="translate('Transitions_ColumnAddedBy')"
+          <td class="managePreprocessedPages__addedBy">
+            <span class="managePreprocessedPages__cellLabel">
+              {{ translate('Transitions_ColumnAddedBy') }}
+            </span>
+            <template v-if="page.created_by === null && page.created_by_superuser">
+              {{ translate('Transitions_AddedBySuperUser') }}
+            </template>
+            <span
+              v-else-if="page.created_by === null"
+              class="managePreprocessedPages__unknownUser"
+              tabindex="0"
+              :title="translate('Transitions_UnknownUserHelp')"
+              :aria-describedby="unknownUserHelpId"
+            >{{ translate('General_Unknown') }}</span>
+            <template v-else>{{ page.created_by }}</template>
+          </td>
+          <td class="entityTable_ActionCell managePreprocessedPages__actionColumn">
+            <button
+              :id="`${idPrefix}Remove${page.idpage}`"
+              type="button"
+              class="table-action icon-delete managePreprocessedPages__remove"
+              :title="translate('General_Remove')"
+              :aria-labelledby="`${idPrefix}Remove${page.idpage} ${idPrefix}Url${page.idpage}`"
+              :disabled="removingId !== null"
+              @click="confirmRemove(page)"
             >
-              <template v-if="page.created_by === null && page.created_by_superuser">
-                {{ translate('Transitions_AddedBySuperUser') }}
-              </template>
-              <span
-                v-else-if="page.created_by === null"
-                class="managePreprocessedPages__unknownUser"
-                tabindex="0"
-                :title="translate('Transitions_UnknownUserHelp')"
-                :aria-describedby="unknownUserHelpId"
-              >{{ translate('General_Unknown') }}</span>
-              <template v-else>{{ page.created_by }}</template>
-            </td>
-            <td class="managePreprocessedPages__actionColumn">
-              <button
-                :id="`${idPrefix}Remove${page.idpage}`"
-                type="button"
-                class="managePreprocessedPages__remove"
-                :aria-labelledby="`${idPrefix}Remove${page.idpage} ${idPrefix}Url${page.idpage}`"
-                :disabled="removingId !== null"
-                @click="confirmRemove(page)"
-              >{{ translate('General_Remove') }}</button>
-            </td>
-          </template>
+              <span class="u-visuallyHidden">{{ translate('General_Remove') }}</span>
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -154,87 +133,119 @@
       class="u-visuallyHidden"
     >{{ translate('Transitions_UnknownUserHelp') }}</span>
 
-    <form
-      class="managePreprocessedPages__addForm"
-      @submit.prevent="add"
-    >
-      <div
-        class="managePreprocessedPages__field"
-        @focusin="loadSuggestions"
-        @focusout="onFieldFocusOut"
-        @keydown.esc="areSuggestionsOpen = false"
+    <template v-if="canAdd">
+      <form
+        class="managePreprocessedPages__addForm"
+        @submit.prevent="add"
       >
-        <Field
-          uicontrol="text"
-          name="preprocessedPageUrl"
-          :title="translate('Transitions_AddPageUrl')"
-          :full-width="true"
-          :model-value="pageUrl"
-          :ui-control-attributes="inputAttributes"
-          @update:model-value="onPageUrlInput"
-        />
         <div
-          v-if="suggestions.length"
-          class="managePreprocessedPages__suggestions"
-          role="group"
-          :aria-label="translate('Transitions_PreprocessedPagesSuggestions')"
+          ref="field"
+          class="managePreprocessedPages__field"
+          @focusin="loadSuggestions"
+          @focusout="onFieldFocusOut"
+          @keydown.esc="areSuggestionsOpen = false"
         >
-          <div class="managePreprocessedPages__suggestionsHeader">
-            <span>{{ translate('Transitions_PreprocessedPagesSuggestions') }}</span>
-            <span>{{ translate('General_ColumnPageviews') }}</span>
-          </div>
-          <ul class="managePreprocessedPages__suggestionList">
-            <li
-              v-for="suggestion in suggestions"
-              :key="suggestion.url"
-              class="managePreprocessedPages__suggestionItem"
-            >
-              <button
-                type="button"
-                class="managePreprocessedPages__suggestion"
-                @mousedown.prevent
-                @click="pickSuggestion(suggestion.url)"
+          <Field
+            uicontrol="text"
+            name="preprocessedPageUrl"
+            autocomplete="off"
+            :title="translate('Transitions_AddPageUrl')"
+            :full-width="true"
+            :model-value="pageUrl"
+            :ui-control-attributes="inputAttributes"
+            @update:model-value="onPageUrlInput"
+          />
+          <div
+            v-if="suggestions.length"
+            class="managePreprocessedPages__suggestions"
+            role="group"
+            :aria-label="translate('Transitions_PreprocessedPagesSuggestions')"
+            :style="suggestionsPosition"
+          >
+            <div class="managePreprocessedPages__suggestionsHeader">
+              <span>{{ translate('Transitions_PreprocessedPagesSuggestions') }}</span>
+              <span>{{ translate('General_ColumnPageviews') }}</span>
+            </div>
+            <ul class="managePreprocessedPages__suggestionList">
+              <li
+                v-for="suggestion in suggestions"
+                :key="suggestion.url"
+                class="managePreprocessedPages__suggestionItem"
               >
-                <span
-                  class="managePreprocessedPages__suggestionUrl"
-                  :title="suggestion.url"
-                >{{ suggestion.url }}</span>
-                <span class="managePreprocessedPages__suggestionPageviews">
-                  {{ formatNumber(suggestion.nb_hits) }}
-                </span>
-              </button>
-            </li>
-          </ul>
+                <button
+                  type="button"
+                  class="managePreprocessedPages__suggestion"
+                  @mousedown.prevent
+                  @click="pickSuggestion(suggestion.url)"
+                >
+                  <span
+                    class="managePreprocessedPages__suggestionUrl"
+                    :title="suggestion.url"
+                  >{{ readableUrl(suggestion.url) }}</span>
+                  <span class="managePreprocessedPages__suggestionPageviews">
+                    {{ formatNumber(suggestion.nb_hits) }}
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
         </div>
-      </div>
-      <button
-        type="submit"
-        class="btn managePreprocessedPages__add"
-        :disabled="isAddDisabled"
-      >{{ translate('Transitions_AddPage') }}</button>
-    </form>
+        <button
+          type="submit"
+          class="btn managePreprocessedPages__add"
+          :disabled="isAddDisabled"
+        >{{ translate('Transitions_AddPage') }}</button>
+      </form>
 
-    <Alert
-      v-if="addError"
-      class="managePreprocessedPages__addError"
-      severity="danger"
-    >
       <div
-        :id="`${idPrefix}AddError`"
-        role="alert"
+        v-if="addError"
+        class="managePreprocessedPages__addError"
       >
-        <div class="managePreprocessedPages__error">{{ addError }}</div>
-        <div
-          v-if="isDuplicateError"
-          class="managePreprocessedPages__duplicateHelp"
-        >{{ translate('Transitions_PreprocessedPageDuplicateHelp') }}</div>
+        <Alert severity="danger">
+          <div
+            :id="`${idPrefix}AddError`"
+            role="alert"
+          >
+            <div class="managePreprocessedPages__error">{{ addError }}</div>
+            <div
+              v-if="isDuplicateError"
+              class="managePreprocessedPages__duplicateHelp"
+            >{{ translate('Transitions_PreprocessedPageDuplicateHelp') }}</div>
+          </div>
+        </Alert>
       </div>
-    </Alert>
 
-    <div
-      :id="`${idPrefix}Hint`"
-      class="managePreprocessedPages__hint"
-    >{{ rebuildHint }}</div>
+      <div
+        :id="`${idPrefix}Hint`"
+        class="managePreprocessedPages__hint"
+      >{{ rebuildHint }}</div>
+    </template>
+
+    <MatomoDialog
+      v-model="isRemoveDialogOpen"
+      @yes="removeConfirmed"
+      @close-end="onRemoveDialogClosed"
+    >
+      <div class="ui-confirm">
+        <h2 class="managePreprocessedPages__dialogTitle">
+          {{ pageToRemove ? confirmLabel(pageToRemove.url) : '' }}
+        </h2>
+        <p>{{ translate('Transitions_StopPreprocessingHelp') }}</p>
+        <!-- the dialog turns the inputs into its buttons by these roles -->
+        <!-- eslint-disable vuejs-accessibility/aria-role -->
+        <input
+          role="yes"
+          type="button"
+          :value="translate('General_Yes')"
+        />
+        <input
+          role="no"
+          type="button"
+          :value="translate('General_No')"
+        />
+        <!-- eslint-enable vuejs-accessibility/aria-role -->
+      </div>
+    </MatomoDialog>
   </ContentBlock>
 </template>
 
@@ -247,12 +258,15 @@ import {
   ContentBlock,
   ContentTable,
   Matomo,
+  MatomoDialog,
+  NotificationsStore,
   NumberFormatter,
   translate,
 } from 'CoreHome';
 import { Field } from 'CorePluginsAdmin';
 import apiErrorText from '../apiErrorText';
 import {
+  addedMessage,
   displayUrl,
   readableUrl,
   formatUtcDateTime,
@@ -296,8 +310,13 @@ export interface ManagePreprocessedPagesState {
   isAdding: boolean;
   addError: string;
   isDuplicateError: boolean;
-  confirmingId: number|null;
+  isUrlError: boolean;
+  pageToRemove: PreprocessedPage|null;
+  /** The row of the page to remove, which takes the focus back when the dialog has closed. */
+  removeIndex: number;
+  isRemoveDialogOpen: boolean;
   removingId: number|null;
+  suggestionsPosition: Record<string, string>;
   suggestionPool: SuggestionEntry[]|null;
   isSuggestionPoolRequested: boolean;
 }
@@ -309,6 +328,23 @@ const SUGGESTION_POOL_SIZE = 500;
 
 /** Shorter input matches too many pages to be a useful suggestion. */
 const MIN_SUGGESTION_CHARS = 3;
+
+/** The add errors about the typed URL, not about the limit, a concurrent change or the network. */
+const URL_ERROR_KEYS = [
+  'Transitions_PreprocessedPageAlreadySelected',
+  'Transitions_PreprocessedPageInvalidUrl',
+  'Transitions_PreprocessedPageUrlTooLong',
+];
+
+/** Whether a message is the given translation, with any value in its placeholders. */
+function isTranslation(message: string, key: string): boolean {
+  const pattern = translate(key)
+    .split(/%(?:\d+\$)?s/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.+');
+
+  return new RegExp(`^${pattern}$`).test(message);
+}
 
 let instanceCount = 0;
 
@@ -328,6 +364,7 @@ export default defineComponent({
     Alert,
     ContentBlock,
     Field,
+    MatomoDialog,
   },
   directives: {
     ContentTable,
@@ -343,8 +380,12 @@ export default defineComponent({
       isAdding: false,
       addError: '',
       isDuplicateError: false,
-      confirmingId: null,
+      isUrlError: false,
+      pageToRemove: null,
+      removeIndex: -1,
+      isRemoveDialogOpen: false,
       removingId: null,
+      suggestionsPosition: {},
       suggestionPool: null,
       isSuggestionPoolRequested: false,
     };
@@ -421,10 +462,14 @@ export default defineComponent({
 
       return '';
     },
-    isAddDisabled(): boolean {
-      return !this.hasLoaded || this.isAdding || this.isLimitReached || !this.pageUrl.trim();
+    /** The add form is shown only when a page can be added; else the limit message says why. */
+    canAdd(): boolean {
+      return this.hasLoaded && !this.isLimitReached;
     },
-    /** The hint, and an error of the last add, describe the field. */
+    isAddDisabled(): boolean {
+      return !this.canAdd || this.isAdding || !this.pageUrl.trim();
+    },
+    /** The hint, and the last add's error, describe the field; a URL error marks it invalid. */
     inputAttributes(): Record<string, string> {
       const describedBy = [`${this.idPrefix}Hint`];
 
@@ -433,9 +478,8 @@ export default defineComponent({
       }
 
       return {
-        autocomplete: 'off',
         'aria-describedby': describedBy.join(' '),
-        'aria-invalid': this.addError ? 'true' : 'false',
+        'aria-invalid': this.isUrlError ? 'true' : 'false',
       };
     },
     rebuildHint(): string {
@@ -488,9 +532,28 @@ export default defineComponent({
       this.pageUrl = value ?? '';
       this.addError = '';
       this.isDuplicateError = false;
+      this.isUrlError = false;
       this.areSuggestionsOpen = true;
 
+      this.positionSuggestions();
       this.loadSuggestions();
+    },
+    /** The suggestions open right under the input, as wide as it, whatever the field's spacing. */
+    positionSuggestions() {
+      const field = this.$refs.field as HTMLElement|undefined;
+      const input = field?.querySelector('input');
+
+      if (!field || !input) {
+        return;
+      }
+
+      const fieldBox = field.getBoundingClientRect();
+      const inputBox = input.getBoundingClientRect();
+      this.suggestionsPosition = {
+        top: `${inputBox.bottom - fieldBox.top}px`,
+        left: `${inputBox.left - fieldBox.left}px`,
+        width: `${inputBox.width}px`,
+      };
     },
     /** The list closes once the focus leaves the field and its suggestions. */
     onFieldFocusOut(event: FocusEvent) {
@@ -563,6 +626,7 @@ export default defineComponent({
       this.isAdding = true;
       this.addError = '';
       this.isDuplicateError = false;
+      this.isUrlError = false;
 
       AjaxHelper.post(
         { method: 'Transitions.addPreprocessedPage', idSite: Matomo.idSite },
@@ -570,29 +634,44 @@ export default defineComponent({
         { createErrorNotification: false },
       ).then(() => {
         this.pageUrl = '';
+        this.showSuccess(addedMessage(this.rearchiveMonths));
         return this.loadPages(false);
       }).catch((error) => {
         this.addError = apiErrorText(error);
         this.isDuplicateError = this.addError
           === translate('Transitions_PreprocessedPageAlreadySelected');
+        this.isUrlError = URL_ERROR_KEYS.some((key) => isTranslation(this.addError, key));
         return this.loadPages(false);
       }).finally(() => {
         this.isAdding = false;
       });
     },
-    /** The remove button goes away with its row's content, so the focus moves to the choice. */
+    /**
+     * Matomo's confirmation dialog. The focus returns to the row's remove button, or the one now in
+     * its place, once the dialog has closed and the page is removed.
+     */
     confirmRemove(page: PreprocessedPage) {
-      this.confirmingId = page.idpage;
-      this.$nextTick(() => {
-        const cancel = (this.$el as HTMLElement).querySelector<HTMLElement>(
-          '.managePreprocessedPages__cancel',
-        );
-        cancel?.focus();
-      });
+      this.pageToRemove = page;
+      this.removeIndex = this.pages.indexOf(page);
+      this.isRemoveDialogOpen = true;
     },
-    cancelRemove(page: PreprocessedPage) {
-      this.confirmingId = null;
-      this.focusRemoveButton(this.pages.indexOf(page));
+    removeConfirmed() {
+      if (this.pageToRemove) {
+        this.remove(this.pageToRemove);
+      }
+    },
+    onRemoveDialogClosed() {
+      if (this.removingId === null) {
+        this.focusRemoveButton(this.removeIndex);
+      }
+    },
+    showSuccess(message: string) {
+      NotificationsStore.show({
+        id: 'TransitionsPreprocessedPages',
+        message,
+        context: 'success',
+        type: 'toast',
+      });
     },
     /** The button at the given row, or the last one; the URL field when the list is empty. */
     focusRemoveButton(index: number) {
@@ -610,10 +689,7 @@ export default defineComponent({
         this.focusField();
       });
     },
-    /**
-     * The list is read again also after a failure, which may be due to another admin's change. The
-     * choice goes away either way, so the focus moves to the remove button now in the row's place.
-     */
+    /** The list is read again also after a failure, which may be due to another admin's change. */
     remove(page: PreprocessedPage) {
       const index = this.pages.indexOf(page);
       this.removingId = page.idpage;
@@ -624,14 +700,17 @@ export default defineComponent({
         { idPage: page.idpage },
         { createErrorNotification: false },
       ).then(
-        () => '',
+        () => {
+          this.showSuccess(translate('Transitions_StopPreprocessingHelp'));
+          return '';
+        },
         (error) => apiErrorText(error),
-      ).then((error) => {
-        this.confirmingId = null;
-        return this.loadPages(false, error);
-      }).then(() => {
+      ).then((error) => this.loadPages(false, error)).then(() => {
         this.removingId = null;
-        this.focusRemoveButton(index);
+
+        if (!this.isRemoveDialogOpen) {
+          this.focusRemoveButton(index);
+        }
       });
     },
     confirmLabel(url: string): string {
@@ -639,9 +718,6 @@ export default defineComponent({
     },
     formatDate(date: string): string {
       return formatUtcDateTime(date);
-    },
-    displayUrl(url: string): string {
-      return displayUrl(url);
     },
     readableUrl(url: string): string {
       return readableUrl(url);
