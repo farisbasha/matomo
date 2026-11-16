@@ -161,11 +161,11 @@
             v-if="suggestions.length"
             class="managePreprocessedPages__suggestions"
             role="group"
-            :aria-label="translate('Transitions_PreprocessedPagesSuggestions')"
+            :aria-label="suggestionsTitle"
             :style="suggestionsPosition"
           >
             <div class="managePreprocessedPages__suggestionsHeader">
-              <span>{{ translate('Transitions_PreprocessedPagesSuggestions') }}</span>
+              <span>{{ suggestionsTitle }}</span>
               <span>{{ translate('General_ColumnPageviews') }}</span>
             </div>
             <ul class="managePreprocessedPages__suggestionList">
@@ -279,6 +279,7 @@ import {
   formatUtcDateTime,
   matchKey,
   pageKey,
+  previousMonthStart,
   stopConfirmLabel,
 } from '../preprocessedPageUrls';
 
@@ -324,6 +325,8 @@ export interface ManagePreprocessedPagesState {
   removingId: number|null;
   suggestionsPosition: Record<string, string>;
   suggestionPool: SuggestionEntry[]|null;
+  /** The period the suggestions are from: the last 30 days, or the previous month as fallback. */
+  suggestionPeriod: 'last30'|'previousMonth';
   isSuggestionPoolRequested: boolean;
 }
 
@@ -393,6 +396,7 @@ export default defineComponent({
       removingId: null,
       suggestionsPosition: {},
       suggestionPool: null,
+      suggestionPeriod: 'last30',
       isSuggestionPoolRequested: false,
     };
   },
@@ -421,6 +425,13 @@ export default defineComponent({
       return this.suggestionPool
         .filter((row) => !selected.has(row.pageKey) && row.matchKey.includes(typed))
         .slice(0, MAX_SUGGESTIONS);
+    },
+    suggestionsTitle(): string {
+      return translate(
+        'Transitions_PreprocessedPagesSuggestions',
+        translate(this.suggestionPeriod === 'last30'
+          ? 'CoreHome_PresetDateLast30Days' : 'CoreHome_PresetDateLastMonth'),
+      );
     },
     usageLabel(): string {
       return translate(
@@ -570,23 +581,14 @@ export default defineComponent({
         this.areSuggestionsOpen = false;
       }
     },
-    /**
-     * The most viewed pages of the last 30 days. The pool is sorted by pageviews, so the first
-     * matches are the most viewed ones. It is read in the background once the field is first used,
-     * not before a page could be added; any URL can be typed meanwhile.
-     */
-    loadSuggestions() {
-      if (this.isSuggestionPoolRequested || !this.hasLoaded || this.isLimitReached) {
-        return;
-      }
-
-      this.isSuggestionPoolRequested = true;
-      AjaxHelper.fetch<PageUrlSuggestion[]>(
+    /** The most viewed pages of a period, flat and sorted by pageviews; rows with a URL only. */
+    fetchSuggestionRows(period: string, date: string): Promise<PageUrlSuggestion[]> {
+      return AjaxHelper.fetch<PageUrlSuggestion[]>(
         {
           method: 'Actions.getPageUrls',
           idSite: Matomo.idSite,
-          period: 'range',
-          date: 'last30',
+          period,
+          date,
           segment: '',
           flat: 1,
           filter_sort_column: 'nb_hits',
@@ -595,20 +597,45 @@ export default defineComponent({
           showColumns: 'label,nb_hits,url',
         },
         { createErrorNotification: false },
-      ).then((rows) => {
-        this.suggestionPool = (rows || []).filter((row) => !!row.url).map((row) => {
-          const url = displayUrl(row.url);
-          return {
-            url,
-            nb_hits: row.nb_hits,
-            matchKey: matchKey(url),
-            pageKey: pageKey(url),
-          };
+      ).then((rows) => (rows || []).filter((row) => !!row.url));
+    },
+    /**
+     * The most viewed pages of the last 30 days, or of the previous calendar month when that range
+     * has no rows or fails, eg where a range can't be archived on request. The pool is sorted by
+     * pageviews, so the first matches are the most viewed ones. It is read in the background once
+     * the field is first used, not before a page could be added; any URL can be typed meanwhile.
+     */
+    loadSuggestions() {
+      if (this.isSuggestionPoolRequested || !this.hasLoaded || this.isLimitReached) {
+        return;
+      }
+
+      this.isSuggestionPoolRequested = true;
+      this.fetchSuggestionRows('range', 'last30')
+        .catch(() => [] as PageUrlSuggestion[])
+        .then((rows) => {
+          if (rows.length) {
+            return rows;
+          }
+
+          this.suggestionPeriod = 'previousMonth';
+          return this.fetchSuggestionRows('month', previousMonthStart(new Date()));
+        })
+        .then((rows) => {
+          this.suggestionPool = rows.map((row) => {
+            const url = displayUrl(row.url);
+            return {
+              url,
+              nb_hits: row.nb_hits,
+              matchKey: matchKey(url),
+              pageKey: pageKey(url),
+            };
+          });
+        })
+        .catch(() => {
+          // suggestions are optional; any URL can still be typed
+          this.suggestionPool = [];
         });
-      }).catch(() => {
-        // suggestions are optional; any URL can still be typed
-        this.suggestionPool = [];
-      });
     },
     /** A suggestion picked by keyboard goes away with the list; the focus returns to the field. */
     pickSuggestion(url: string) {

@@ -175,6 +175,10 @@ describe('Transitions/ManagePreprocessedPages', () => {
     state.notify.mockReset();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe('list', () => {
     it('should list the pages with the usage of the limit', async () => {
       answer(() => [
@@ -529,6 +533,101 @@ describe('Transitions/ManagePreprocessedPages', () => {
     function poolRequests() {
       return state.fetch.mock.calls.filter(([params]) => params.method === 'Actions.getPageUrls');
     }
+
+    /** The suggestions per period: rows, or an error to fail with. */
+    function answerPool(last30: unknown[]|Error, previousMonth: unknown[]|Error = []) {
+      state.fetch.mockImplementation((params: Record<string, unknown>) => {
+        if (params.method === 'Transitions.getPreprocessedPages') {
+          return Promise.resolve([]);
+        }
+
+        const rows = params.period === 'range' ? last30 : previousMonth;
+        return rows instanceof Error ? Promise.reject(rows) : Promise.resolve(rows);
+      });
+    }
+
+    async function suggestionsFor(wrapper: VueWrapper, typed: string) {
+      await wrapper.find('.managePreprocessedPages__field').trigger('focusin');
+      await flushPromises();
+      await typeUrl(wrapper, typed);
+      return wrapper.findAll('.managePreprocessedPages__suggestionUrl').map((url) => url.text());
+    }
+
+    it('should keep to the last 30 days when they have pages', async () => {
+      answerPool(POOL, [{ label: '/old', nb_hits: 1, url: 'https://example.org/a-old' }]);
+      const wrapper = await mountPage();
+
+      expect(await suggestionsFor(wrapper, 'example.org/a')).toEqual([
+        'https://example.org/a',
+        'https://example.org/a?q=<b>',
+        'http://www.example.org/A/b',
+      ]);
+      expect(poolRequests().map(([params]) => params.period)).toEqual(['range']);
+      expect(wrapper.find('.managePreprocessedPages__suggestionsHeader').text())
+        .toContain('Transitions_PreprocessedPagesSuggestions:CoreHome_PresetDateLast30Days');
+    });
+
+    it.each([
+      ['have no pages', []],
+      ['have no pages with a URL', [{ label: 'Others', nb_hits: 3 }]],
+      ['fail, eg as a range can\'t be archived on request', new Error('No data')],
+    ])('should fall back to the previous month when the last 30 days %s', async (_, last30) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-06-15T10:00:00Z'));
+      answerPool(last30 as unknown[]|Error, POOL);
+      const wrapper = await mountPage();
+
+      expect(await suggestionsFor(wrapper, 'example.org/c')).toEqual(['https://example.org/c']);
+      expect(poolRequests().map(([params]) => [params.period, params.date])).toEqual([
+        ['range', 'last30'],
+        ['month', '2026-05-01'],
+      ]);
+      expect(poolRequests()[1][0]).toMatchObject({
+        flat: 1,
+        segment: '',
+        filter_sort_column: 'nb_hits',
+        filter_sort_order: 'desc',
+        filter_limit: 500,
+      });
+      expect(wrapper.find('.managePreprocessedPages__suggestionsHeader').text())
+        .toContain('Transitions_PreprocessedPagesSuggestions:CoreHome_PresetDateLastMonth');
+    });
+
+    it.each([
+      ['are empty', [], []],
+      ['fail', new Error('No data'), new Error('No data')],
+    ])('should show no suggestions and no error when both periods %s', async (_, last30, previousMonth) => {
+      answerPool(last30 as unknown[]|Error, previousMonth as unknown[]|Error);
+      const wrapper = await mountPage();
+
+      expect(await suggestionsFor(wrapper, 'example.org/a')).toEqual([]);
+      expect(wrapper.find('.managePreprocessedPages__suggestions').exists()).toBe(false);
+      expect(wrapper.find('.managePreprocessedPages__error').exists()).toBe(false);
+
+      // at most these two requests, however often the field is used
+      await typeUrl(wrapper, 'example.org/b');
+      await wrapper.find('.managePreprocessedPages__field').trigger('focusin');
+      await flushPromises();
+      expect(poolRequests()).toHaveLength(2);
+      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeUndefined();
+    });
+
+    it.each([
+      ['on the last day of a month longer than the previous one', '2026-03-31T18:00:00Z', '2026-02-01'],
+      ['across the year', '2027-01-15T10:00:00Z', '2026-12-01'],
+      ['while the month just started in UTC has not yet for every website', '2026-04-01T06:00:00Z', '2026-02-01'],
+      ['once the month has started for every website', '2026-04-01T12:00:00Z', '2026-03-01'],
+    ])('should fall back to the previous calendar month %s', async (_, now, date) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(now));
+      answerPool([], POOL);
+      const wrapper = await mountPage();
+
+      await wrapper.find('.managePreprocessedPages__field').trigger('focusin');
+      await flushPromises();
+
+      expect(poolRequests()[1][0]).toMatchObject({ period: 'month', date });
+    });
 
     it('should read the most viewed pages of the last 30 days once, when the field is first used', async () => {
       answer(() => [], POOL);

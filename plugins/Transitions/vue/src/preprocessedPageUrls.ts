@@ -131,6 +131,23 @@ export function formatUtcDateTime(dateTime: string): string {
   return translate('Transitions_DateTimeUtc', dateTime.substring(0, 16));
 }
 
+/** No timezone is further behind UTC (UTC−12). */
+const MAX_BEHIND_UTC_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * The first day of the month before the current one, as `YYYY-MM-DD`, taken 12 hours behind UTC
+ * so the month has ended in every website's timezone. The `lastMonth` keyword is not used: on eg
+ * March 31 it lands in the current month.
+ */
+export function previousMonthStart(now: Date): string {
+  const behindmost = new Date(now.getTime() - MAX_BEHIND_UTC_MS);
+  const month = behindmost.getUTCMonth();
+  const year = behindmost.getUTCFullYear() - (month === 0 ? 1 : 0);
+  const previousMonth = month === 0 ? 12 : month;
+
+  return `${year}-${String(previousMonth).padStart(2, '0')}-01`;
+}
+
 function percentDecode(text: string): string {
   try {
     return decodeURIComponent(text);
