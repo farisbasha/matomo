@@ -172,6 +172,42 @@ class Service
     }
 
     /**
+     * Deletes the rows of removed pages whose stored records the deletion of old reports has deleted: those removed
+     * before the oldest month whose archives it keeps, with one month more, as it deletes whole months. Archives of a
+     * page hold its records only of periods that started before it was removed, so they are all in the archive tables
+     * of that month or earlier. Nothing is deleted while old reports of some periods or segments are kept.
+     *
+     * @param array<string, int> $purgeDataSettings see PrivacyManager::getPurgeDataSettings()
+     * @return string|null the time (UTC) before which removed pages were deleted, null if none were
+     */
+    public function deleteRemovedPagesOfDeletedReports(array $purgeDataSettings, Date $today): ?string
+    {
+        if (empty($purgeDataSettings['delete_reports_enable'])) {
+            return null;
+        }
+        foreach (['day', 'week', 'month', 'year', 'segment'] as $kept) {
+            if (!empty($purgeDataSettings['delete_reports_keep_' . $kept . '_reports'])) {
+                return null;
+            }
+        }
+
+        // ReportsPurger deletes the archive tables of this month and older ones
+        $oldestMonthDeleted = $today->subMonth(1 + (int) ($purgeDataSettings['delete_reports_older_than'] ?? 0));
+        $removedBefore = $oldestMonthDeleted->setDay(1)->toString('Y-m-d 00:00:00');
+
+        foreach ($this->dao->getSitesWithPagesRemovedBefore($removedBefore) as $idSite) {
+            $locks = $this->lockPages($idSite);
+            try {
+                $this->dao->deletePagesRemovedBefore($idSite, $removedBefore);
+            } finally {
+                $this->unlock($locks);
+            }
+        }
+
+        return $removedBefore;
+    }
+
+    /**
      * Locks the website's pages, then the scheduled rebuilds: core rewrites the whole list of them on every change, so
      * the changes for different websites are made one at a time too. Core's other writers of the list, such as
      * `core:archive` applying it, segment changes and plugin activations, take no lock, so a change made at that

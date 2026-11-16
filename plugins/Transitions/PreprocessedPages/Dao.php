@@ -263,6 +263,28 @@ class Dao
         return (bool) Db::fetchOne('SELECT 1 FROM ' . Common::prefixTable('site') . ' WHERE idsite = ?', [$idSite]);
     }
 
+    /**
+     * @return list<int> the websites with pages removed before the time (UTC)
+     */
+    public function getSitesWithPagesRemovedBefore(string $removedBefore): array
+    {
+        return array_map('intval', array_column(
+            Db::fetchAll('SELECT DISTINCT idsite FROM ' . $this->getTable() . ' WHERE removed_date IS NOT NULL AND removed_date < ?', [$removedBefore]),
+            'idsite'
+        ));
+    }
+
+    /**
+     * Deletes the website's pages removed before the time (UTC); selected pages are never deleted.
+     */
+    public function deletePagesRemovedBefore(int $idSite, string $removedBefore): void
+    {
+        Db::query(
+            'DELETE FROM ' . $this->getTable() . ' WHERE idsite = ? AND removed_date IS NOT NULL AND removed_date < ?',
+            [$idSite, $removedBefore]
+        );
+    }
+
     public function deletePagesForSite(int $idSite): void
     {
         $this->writeIfTableExists('DELETE FROM ' . $this->getTable() . ' WHERE idsite = ?', [$idSite]);

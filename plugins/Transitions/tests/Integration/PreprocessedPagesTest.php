@@ -19,6 +19,7 @@ use Piwik\Concurrency\LockBackend;
 use Piwik\Config;
 use Piwik\Container\StaticContainer;
 use Piwik\CronArchive\ReArchiveList;
+use Piwik\Date;
 use Piwik\Db;
 use Piwik\Exception\ThingNotFoundException;
 use Piwik\Exception\UnexpectedWebsiteFoundException;
@@ -26,8 +27,10 @@ use Piwik\Http\BadRequestException;
 use Piwik\NoAccessException;
 use Piwik\Option;
 use Piwik\Plugin\Manager as PluginManager;
+use Piwik\Plugins\PrivacyManager\PrivacyManager;
 use Piwik\Plugins\SitesManager\API as SitesManagerAPI;
 use Piwik\Plugins\Transitions\API;
+use Piwik\Plugins\Transitions\Tasks;
 use Piwik\Plugins\Transitions\PreprocessedPages\ArchivingMode;
 use Piwik\Plugins\Transitions\PreprocessedPages\Dao;
 use Piwik\Plugins\Transitions\PreprocessedPages\PreprocessedPagesBusyException;
@@ -46,6 +49,20 @@ use Piwik\Tests\Framework\TestCase\IntegrationTestCase;
  */
 class PreprocessedPagesTest extends IntegrationTestCase
 {
+    /**
+     * Old reports older than 3 months are deleted, of every period and segment; by default, monthly and yearly ones
+     * are kept.
+     */
+    private const DELETE_ALL_OLD_REPORTS = [
+        'delete_reports_enable' => 1,
+        'delete_reports_older_than' => 3,
+        'delete_reports_keep_day_reports' => 0,
+        'delete_reports_keep_week_reports' => 0,
+        'delete_reports_keep_month_reports' => 0,
+        'delete_reports_keep_year_reports' => 0,
+        'delete_reports_keep_segment_reports' => 0,
+    ];
+
     private API $api;
 
     public function setUp(): void
@@ -63,6 +80,7 @@ class PreprocessedPagesTest extends IntegrationTestCase
 
     public function tearDown(): void
     {
+        Date::$now = null;
         Fixture::resetTranslations();
         parent::tearDown();
     }
@@ -843,6 +861,75 @@ class PreprocessedPagesTest extends IntegrationTestCase
     /**
      * @return string[]
      */
+    /**
+     * The deletion of old reports deleted the records of pages removed before its oldest kept month, with one month
+     * more, so their rows are deleted too; selected pages, and pages removed later, are kept.
+     */
+    public function testRemovedPagesAreDeletedWithTheirOldReports(): void
+    {
+        $removed = $this->addPagesRemovedAt(['https://example.com/old' => '2026-01-31 23:59:59', 'https://example.com/kept' => '2026-02-01 00:00:00']);
+        $selected = $this->api->addPreprocessedPage(1, 'https://example.com/selected')['idpage'];
+        $this->addPagesRemovedAt(['https://example.org/old' => '2025-06-01 00:00:00'], 2);
+        PrivacyManager::savePurgeDataSettings(self::DELETE_ALL_OLD_REPORTS);
+        Date::$now = strtotime('2026-06-15 12:00:00');
+
+        // the reports of February and older ones are deleted
+        (new Tasks())->deleteRemovedPreprocessedPagesOfDeletedReports();
+
+        self::assertSame(
+            [$removed['https://example.com/kept'], $selected],
+            array_map('intval', array_column(Db::fetchAll('SELECT idpage FROM ' . Common::prefixTable('transitions_preprocessed_page') . ' ORDER BY idpage'), 'idpage'))
+        );
+
+        // a page removed and deleted is added again as a new page
+        $readded = $this->api->addPreprocessedPage(1, 'https://example.com/old');
+        self::assertNotSame($removed['https://example.com/old'], $readded['idpage']);
+    }
+
+    /**
+     * @dataProvider getKeptOldReports
+     */
+    public function testRemovedPagesAreKeptWhileOldReportsAreKept(array $settings): void
+    {
+        $this->addPagesRemovedAt(['https://example.com/old' => '2025-01-01 00:00:00']);
+        PrivacyManager::savePurgeDataSettings($settings + self::DELETE_ALL_OLD_REPORTS);
+        Date::$now = strtotime('2026-06-15 12:00:00');
+
+        (new Tasks())->deleteRemovedPreprocessedPagesOfDeletedReports();
+
+        self::assertSame(1, (int) Db::fetchOne('SELECT COUNT(*) FROM ' . Common::prefixTable('transitions_preprocessed_page')));
+    }
+
+    /**
+     * @return iterable<string, array{array<string, int>}>
+     */
+    public function getKeptOldReports(): iterable
+    {
+        yield 'deletion of old reports disabled' => [['delete_reports_enable' => 0]];
+        foreach (['day', 'week', 'month', 'year', 'segment'] as $kept) {
+            yield $kept . ' reports kept' => [['delete_reports_keep_' . $kept . '_reports' => 1]];
+        }
+    }
+
+    /**
+     * @param array<string, string> $removedDates by URL
+     * @return array<string, int> the idpage by URL
+     */
+    private function addPagesRemovedAt(array $removedDates, int $idSite = 1): array
+    {
+        $idPages = [];
+        foreach ($removedDates as $url => $removedDate) {
+            $idPages[$url] = $this->api->addPreprocessedPage($idSite, $url)['idpage'];
+            $this->api->removePreprocessedPage($idSite, $idPages[$url]);
+            Db::query(
+                'UPDATE ' . Common::prefixTable('transitions_preprocessed_page') . ' SET removed_date = ? WHERE idpage = ?',
+                [$removedDate, $idPages[$url]]
+            );
+        }
+
+        return $idPages;
+    }
+
     private function getUrls(int $idSite): array
     {
         return array_column($this->api->getPreprocessedPages($idSite), 'url');
