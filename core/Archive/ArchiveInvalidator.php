@@ -324,43 +324,6 @@ class ArchiveInvalidator
 
         $this->markArchivesInvalidated($idSites, $allPeriodsToInvalidate, $segment, $period != 'range', $forceInvalidateNonexistentRanges, $name, $doNotCreateInvalidations);
 
-        $invalidatedPeriods = [];
-        foreach ($allPeriodsToInvalidate as $periodsOfYearMonth) {
-            foreach ($periodsOfYearMonth as $invalidatedPeriod) {
-                $invalidatedPeriods[] = $invalidatedPeriod;
-            }
-        }
-
-        /**
-         * Triggered by markArchivesAsInvalidated() once it marked the archives, also when it doesn't create
-         * invalidations to process, with the periods it invalidated: those of the requested dates, without periods
-         * starting before the oldest date with logs unless these are included explicitly, their parent periods and,
-         * when cascading down, their child periods.
-         *
-         * An invalidation of a single report (`Plugin.report`) marks no archive, it only queues the report to be
-         * archived again. Others also mark the range archives overlapping the periods, which are not passed unless a
-         * range was invalidated. markArchivesOverlappingRangeAsInvalidated() doesn't post this event.
-         *
-         * Plugins that store data outside the invalidated archives, for example in partial archives, which are not
-         * invalidated, can use it to discard the data of these periods.
-         *
-         * **Example**
-         *
-         *     public function onArchivesInvalidated(array $idSites, array $periods, ?Segment $segment, ?string $name)
-         *     {
-         *         if ($name === null || $name === 'MyPlugin') {
-         *             $this->discardStoredData($idSites, $periods, $segment);
-         *         }
-         *     }
-         *
-         * @param int[] $idSites The IDs of the sites whose archives were invalidated.
-         * @param Period[] $periods The invalidated periods.
-         * @param null|Segment $segment The invalidated segment, or null for all segments. A Segment of an empty
-         *                              definition means "all visits" only.
-         * @param null|string $name The invalidated plugin or `Plugin.report`, or null for all plugins.
-         */
-        Piwik::postEvent('Archiving.markArchivesAsInvalidated.end', [array_map('intval', $idSites), $invalidatedPeriods, $segment, $name]);
-
         $isInvalidatingDays = $period == 'day' || $cascadeDown || empty($period);
         $isNotInvalidatingSegment = empty($segment) || empty($segment->getString());
 

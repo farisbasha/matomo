@@ -18,7 +18,6 @@ use Piwik\DataAccess\ArchiveWriter;
 use Piwik\DataAccess\Model;
 use Piwik\Date;
 use Piwik\Db;
-use Piwik\EventDispatcher;
 use Piwik\Option;
 use Piwik\Period\Day;
 use Piwik\Period\Month;
@@ -779,37 +778,6 @@ class ArchiveInvalidatorTest extends IntegrationTestCase
         $this->invalidator->reArchiveReport([1], 'ExamplePlugin', 'ExampleReport');
 
         $this->assertSameReports([$yesterday->toString() => [1]], $this->invalidator->getRememberedArchivedReportsThatShouldBeInvalidated());
-    }
-
-    public function testMarkArchivesAsInvalidatedPostsTheInvalidatedPeriods()
-    {
-        $posted = [];
-        EventDispatcher::getInstance()->addObserver('Archiving.markArchivesAsInvalidated.end', function ($idSites, $periods, $segment, $name) use (&$posted) {
-            $posted[] = [$idSites, array_map(fn($period) => $period->getLabel() . ' ' . $period->getRangeString(), $periods), $segment, $name];
-        });
-
-        // the IDs are posted as integers
-        $this->invalidator->markArchivesAsInvalidated(['1'], [Date::factory('2014-04-05')], 'week', null, true, false, 'ExamplePlugin');
-
-        $this->assertCount(1, $posted);
-        [$idSites, $periods, $segment, $name] = $posted[0];
-        $this->assertSame([1], $idSites);
-        $this->assertNull($segment);
-        $this->assertSame('ExamplePlugin', $name);
-        sort($periods);
-        $this->assertSame([
-            'day 2014-03-31,2014-03-31',
-            'day 2014-04-01,2014-04-01',
-            'day 2014-04-02,2014-04-02',
-            'day 2014-04-03,2014-04-03',
-            'day 2014-04-04,2014-04-04',
-            'day 2014-04-05,2014-04-05',
-            'day 2014-04-06,2014-04-06',
-            'month 2014-03-01,2014-03-31',
-            'month 2014-04-01,2014-04-30',
-            'week 2014-03-31,2014-04-06',
-            'year 2014-01-01,2014-12-31',
-        ], $periods);
     }
 
     private function rememberReport($idSite, $date)
