@@ -53,7 +53,7 @@
         "PreprocessedPagesOverLimit": "%1$s pages are selected, more than the current limit of %2$s. All %1$s are still prepared. Remove %3$s pages to add new ones.",
         "PreprocessedPagesRebuildHint": "Newly added pages are prepared for the past %s months during the next archiving runs. Until then, the report uses raw data.",
         "PreprocessedPagesRebuildHintOneMonth": "Newly added pages are prepared for the past month during the next archiving runs. Until then, the report uses raw data.",
-        "PreprocessedPagesSuggestions": "Most viewed matching pages · last month",
+        "PreprocessedPagesSuggestions": "Most viewed matching pages · last 30 days",
         "PreprocessedPagesUsage": "%1$s of %2$s pages selected",
         "PreprocessedPageUrlTooLong": "The page URL is too long. Use at most %s characters.",
         "PreprocessedTransitions": "Pre-processed Transitions",

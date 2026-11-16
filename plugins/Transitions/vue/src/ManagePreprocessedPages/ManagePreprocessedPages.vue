@@ -279,7 +279,6 @@ import {
   formatUtcDateTime,
   matchKey,
   pageKey,
-  previousMonthStart,
   stopConfirmLabel,
 } from '../preprocessedPageUrls';
 
@@ -572,9 +571,9 @@ export default defineComponent({
       }
     },
     /**
-     * The most viewed pages of the previous calendar month: a finished month, which archiving has
-     * already processed and keeps. The pool is sorted by pageviews, so the first matches are the
-     * most viewed ones. Nothing is read until a page could be added.
+     * The most viewed pages of the last 30 days. The pool is sorted by pageviews, so the first
+     * matches are the most viewed ones. It is read in the background once the field is first used,
+     * not before a page could be added; any URL can be typed meanwhile.
      */
     loadSuggestions() {
       if (this.isSuggestionPoolRequested || !this.hasLoaded || this.isLimitReached) {
@@ -586,8 +585,8 @@ export default defineComponent({
         {
           method: 'Actions.getPageUrls',
           idSite: Matomo.idSite,
-          period: 'month',
-          date: previousMonthStart(new Date()),
+          period: 'range',
+          date: 'last30',
           segment: '',
           flat: 1,
           filter_sort_column: 'nb_hits',

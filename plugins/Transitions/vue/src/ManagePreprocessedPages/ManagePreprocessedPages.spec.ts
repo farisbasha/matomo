@@ -175,10 +175,6 @@ describe('Transitions/ManagePreprocessedPages', () => {
     state.notify.mockReset();
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   describe('list', () => {
     it('should list the pages with the usage of the limit', async () => {
       answer(() => [
@@ -534,9 +530,7 @@ describe('Transitions/ManagePreprocessedPages', () => {
       return state.fetch.mock.calls.filter(([params]) => params.method === 'Actions.getPageUrls');
     }
 
-    it('should read the most viewed pages of last month once, when the field is first used', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-06-15T10:00:00Z'));
+    it('should read the most viewed pages of the last 30 days once, when the field is first used', async () => {
       answer(() => [], POOL);
       const wrapper = await mountPage();
       expect(poolRequests()).toHaveLength(0);
@@ -550,8 +544,8 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(poolRequests()).toHaveLength(1);
       expect(poolRequests()[0][0]).toMatchObject({
         idSite: 1,
-        period: 'month',
-        date: '2026-05-01',
+        period: 'range',
+        date: 'last30',
         flat: 1,
         filter_sort_column: 'nb_hits',
         filter_sort_order: 'desc',
@@ -560,20 +554,22 @@ describe('Transitions/ManagePreprocessedPages', () => {
       expect(poolRequests()[0][0]).not.toHaveProperty('filter_pattern');
     });
 
-    it.each([
-      ['on the last day of a month longer than the previous one', '2026-03-31T18:00:00Z', '2026-02-01'],
-      ['across the year', '2027-01-15T10:00:00Z', '2026-12-01'],
-      ['while the month just started in UTC has not yet for every website', '2026-04-01T06:00:00Z', '2026-02-01'],
-      ['once the month has started for every website', '2026-04-01T12:00:00Z', '2026-03-01'],
-    ])('should read the previous calendar month %s', async (_, now, date) => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date(now));
-      answer(() => [], POOL);
+    it('should let a URL be typed and added while the suggestions are still loading', async () => {
+      state.fetch.mockImplementation((params: Record<string, unknown>) => (
+        params.method === 'Transitions.getPreprocessedPages'
+          ? Promise.resolve([])
+          : new Promise(() => { /* never answered */ })
+      ));
+      state.post.mockResolvedValue({ idpage: 1 });
       const wrapper = await mountPage();
 
       await wrapper.find('.managePreprocessedPages__field').trigger('focusin');
+      await typeUrl(wrapper, 'https://example.org/new');
+      expect(wrapper.find('.managePreprocessedPages__add').attributes('disabled')).toBeUndefined();
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
 
-      expect(poolRequests()[0][0]).toMatchObject({ period: 'month', date });
+      expect(state.post).toHaveBeenCalledTimes(1);
     });
 
     it.each([
