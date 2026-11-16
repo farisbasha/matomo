@@ -281,12 +281,13 @@ class PreprocessedReportTest extends IntegrationTestCase
 
     public function testALimitAboveTheRowLimitIsAnsweredFromTheLogs(): void
     {
-        $raw = $this->request('month', self::DAY, '', 101);
+        $aboveTheLimit = Records::DEFAULT_MAX_ROWS_SERVED + 1;
+        $raw = $this->request('month', self::DAY, '', $aboveTheLimit);
 
         $this->archive($this->selectPage(self::PAGE_URL), 'month', self::DAY);
 
-        self::assertSame($this->toArray($raw), $this->toArray($this->request('month', self::DAY, '', 101)));
-        self::assertSame(1, $this->request('month', self::DAY, '', 100)['preprocessed']);
+        self::assertSame($this->toArray($raw), $this->toArray($this->request('month', self::DAY, '', $aboveTheLimit)));
+        self::assertSame(1, $this->request('month', self::DAY, '', Records::DEFAULT_MAX_ROWS_SERVED)['preprocessed']);
     }
 
     public function testALimitAboveALoweredRowLimitIsAnsweredFromTheLogs(): void
@@ -465,7 +466,7 @@ class PreprocessedReportTest extends IntegrationTestCase
 
     public function testTheRowsServedAreValidatedAndCappedByTheStoredRows(): void
     {
-        self::assertSame(100, Records::getMaxRowsServed(1));
+        self::assertSame(500, Records::getMaxRowsServed(1));
 
         Config::setSetting('Transitions', 'preprocessed_max_rows_served', '50');
         Config::setSetting('Transitions_1', 'preprocessed_max_rows_served', 20);
@@ -717,7 +718,7 @@ class PreprocessedReportTest extends IntegrationTestCase
         self::assertSame($this->toArray($rawOther), $this->toArray($this->request('day', self::DAY, '', 0, 'all', self::OTHER_PAGE_URL)));
         self::assertNotEmpty($this->getRows(OverlayAPI::getInstance()->getFollowingPages(self::OTHER_PAGE_URL, 1, 'day', self::DAY)));
         // more rows than served by default are answered from the logs, also for the pre-processed page
-        self::assertNotEmpty($this->getRows(OverlayAPI::getInstance()->getFollowingPages(self::PAGE_URL, 1, 'day', self::DAY)));
+        self::assertArrayNotHasKey('preprocessed', $this->request('day', self::DAY, '', Records::DEFAULT_MAX_ROWS_SERVED + 1));
 
         $this->expectExceptionMessage('Invalid value for [Transitions] preprocessed_max_rows_served: expected an integer >= 1.');
         $this->request('day', self::DAY);
@@ -866,7 +867,7 @@ class PreprocessedReportTest extends IntegrationTestCase
 
         $requests = [
             'page without stored data' => fn() => $this->request('year', self::DAY, '', 0, 'all', self::OTHER_PAGE_URL),
-            'limit above the row limit' => fn() => $this->request('year', self::DAY, '', 101),
+            'limit above the row limit' => fn() => $this->request('year', self::DAY, '', Records::DEFAULT_MAX_ROWS_SERVED + 1),
             'segment not pre-processed' => fn() => $this->request('year', self::DAY, 'browserCode==FF'),
             // the week after has neither records nor visits
             'range not covered' => fn() => $this->request('range', '2010-03-06,2010-03-21'),
@@ -896,27 +897,31 @@ class PreprocessedReportTest extends IntegrationTestCase
         self::assertSame('2011-01-02 03:04:05', $this->request('range', self::RANGE)['preprocessedAt']);
     }
 
-    public function testOverlayIsUnchangedByDefault(): void
+    /**
+     * The Overlay asks for 300 following pages by default, which the stored records serve.
+     */
+    public function testOverlayIsServedFromStoredDataByDefault(): void
     {
+        $raw = $this->getFollowingPages();
+
+        $this->archive($this->selectPage(self::PAGE_URL), 'day', self::DAY);
+
+        $stored = $this->withoutLogTables(fn() => $this->getFollowingPages());
+        self::assertNotEmpty($stored);
+        sort($raw);
+        sort($stored);
+        self::assertSame($raw, $stored);
+    }
+
+    public function testOverlayAskingForMoreRowsThanServedUsesTheLogs(): void
+    {
+        Config::setSetting('Transitions', 'preprocessed_max_rows_served', 299);
         $raw = $this->getFollowingPages();
 
         $this->archive($this->selectPage(self::PAGE_URL), 'day', self::DAY);
 
         self::assertSame($raw, $this->getFollowingPages());
         self::assertSame([], $this->withoutLogTables(fn() => $this->getFollowingPages()));
-    }
-
-    public function testOverlayReadsStoredDataWithASmallLimit(): void
-    {
-        Config::getInstance()->General['overlay_following_pages_limit'] = 100;
-        $raw = $this->getFollowingPages();
-
-        $this->archive($this->selectPage(self::PAGE_URL), 'day', self::DAY);
-
-        $stored = $this->withoutLogTables(fn() => $this->getFollowingPages());
-        sort($raw);
-        sort($stored);
-        self::assertSame($raw, $stored);
     }
 
     public function testTheJsGlobalTellsWhetherTheSiteHasPreprocessedPages(): void

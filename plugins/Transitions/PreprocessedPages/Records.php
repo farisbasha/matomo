@@ -84,7 +84,7 @@ final class Records
     public const UNKNOWN_SEARCH_ENGINE_LABEL = '';
 
     public const DEFAULT_MAX_ROWS = 1000;
-    public const DEFAULT_MAX_ROWS_SERVED = 100;
+    public const DEFAULT_MAX_ROWS_SERVED = 500;
 
     /**
      * Records are built and served for all visits and the segments pre-processed for Transitions only.

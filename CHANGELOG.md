@@ -10,7 +10,7 @@ The Product Changelog at **[matomo.org/changelog](https://matomo.org/changelog)*
 * `[log] log_format` (and `log_format_<writer>` per writer) lets the file, database, errorlog and syslog log writers write `json`, `loggly` or `logstash` instead of `text`.
 * `[Transitions] max_preprocessed_pages` (default `20`) limits the pages per website whose Transitions report is pre-processed.
 * `[Transitions] preprocessed_refresh_after` (default `900` seconds, `0` turns it off) sets when the pre-processed Transitions data of today or yesterday is rebuilt in a request.
-* `[Transitions] preprocessed_max_rows_served` (default `100`) sets the most rows per list a Transitions report served from pre-processed data shows; larger `limitBeforeGrouping` values use the raw logs.
+* `[Transitions] preprocessed_max_rows_served` (default `500`) sets the most rows per list a Transitions report served from pre-processed data shows; larger `limitBeforeGrouping` values use the raw logs.
 * `[General] datatable_archiving_maximum_rows_transitions` (default `1000`) sets the rows kept per list of a pre-processed Transitions page.
 * The three `[Transitions]` settings above can be overridden for one website in a `[Transitions_idSite]` section.
 

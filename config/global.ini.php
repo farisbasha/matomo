@@ -1680,6 +1680,6 @@ preprocessed_refresh_after = 900
 ; Most rows per list a Transitions report served from pre-processed data shows, at most
 ; datatable_archiving_maximum_rows_transitions. Requests for more rows use the raw logs.
 ; Override it for one website in a [Transitions_idSite] section.
-preprocessed_max_rows_served = 100
+preprocessed_max_rows_served = 500
 
 ; NOTE: do not directly edit this file! See notice at the top
