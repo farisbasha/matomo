@@ -327,11 +327,9 @@ class ArchiveInvalidator
         $isInvalidatingDays = $period == 'day' || $cascadeDown || empty($period);
         $isNotInvalidatingSegment = empty($segment) || empty($segment->getString());
 
-        // an invalidation of a single plugin or report doesn't archive the other plugins' reports again
         if (
             $isInvalidatingDays
             && $isNotInvalidatingSegment
-            && empty($name)
         ) {
             $hasDeletedAny = false;
 
@@ -713,7 +711,7 @@ class ArchiveInvalidator
             $this->model->updateArchiveAsInvalidated($table, $idSites, $datesForTable, $segment, $forceInvalidateNonexistentRanges, $name, $doNotCreateInvalidations);
 
             if ($removeRanges && !empty($table)) {
-                $this->model->updateRangeArchiveAsInvalidated($table, $idSites, $datesForTable, $segment, $name);
+                $this->model->updateRangeArchiveAsInvalidated($table, $idSites, $datesForTable, $segment);
             }
         }
 

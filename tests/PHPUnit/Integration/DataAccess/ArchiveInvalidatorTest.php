@@ -755,31 +755,6 @@ class ArchiveInvalidatorTest extends IntegrationTestCase
         $this->assertSameReports($expected, $reports);
     }
 
-    public function testMarkArchivesAsInvalidatedForAPluginOrReportKeepsTheRememberedDates()
-    {
-        $this->rememberReport(1, '2014-04-05');
-
-        $this->invalidator->markArchivesAsInvalidated([1], [Date::factory('2014-04-05')], 'day', null, false, false, 'ExamplePlugin');
-        $this->invalidator->markArchivesAsInvalidated([1], [Date::factory('2014-04-05')], 'day', null, false, false, 'ExamplePlugin.ExampleReport');
-
-        $this->assertSameReports(['2014-04-05' => [1]], $this->invalidator->getRememberedArchivedReportsThatShouldBeInvalidated());
-
-        // they are applied, and forgotten, by the next invalidation for all plugins
-        $this->invalidator->markArchivesAsInvalidated([1], [Date::factory('2014-04-05')], 'day');
-        $this->assertSame([], $this->invalidator->getRememberedArchivedReportsThatShouldBeInvalidated());
-    }
-
-    public function testReArchiveReportKeepsTheRememberedDatesOfTheSites()
-    {
-        Config::getInstance()->General['rearchive_reports_in_past_last_n_months'] = 'last1';
-        $yesterday = Date::factory('yesterday');
-        $this->rememberReport(1, $yesterday->toString());
-
-        $this->invalidator->reArchiveReport([1], 'ExamplePlugin', 'ExampleReport');
-
-        $this->assertSameReports([$yesterday->toString() => [1]], $this->invalidator->getRememberedArchivedReportsThatShouldBeInvalidated());
-    }
-
     private function rememberReport($idSite, $date)
     {
         $date = Date::factory($date);
@@ -977,34 +952,6 @@ class ArchiveInvalidatorTest extends IntegrationTestCase
                 $range + ['name' => 'done.Actions', 'value' => ArchiveWriter::DONE_PARTIAL],
             ],
         ], $this->getAvailableArchives());
-    }
-
-    /**
-     * @dataProvider getNamesOfRangeInvalidations
-     */
-    public function testMarkArchivesAsInvalidatedOfASingleReportLeavesTheRangeArchives(?string $name, int $expectedValue)
-    {
-        $this->insertArchiveRow(1, '2020-03-02,2020-03-04', 'range', ArchiveWriter::DONE_OK, false, false);
-        $this->insertArchiveRow(1, '2020-03-02,2020-03-04', 'range', ArchiveWriter::DONE_OK, 'Actions', false);
-
-        $this->invalidator->markArchivesAsInvalidated([1], ['2020-03-03'], 'day', null, false, false, $name);
-
-        $range = ['idsite' => 1, 'date1' => '2020-03-02', 'date2' => '2020-03-04', 'period' => 5];
-        $this->assertEquals([
-            '2020_03' => [
-                $range + ['name' => 'done', 'value' => $expectedValue],
-                $range + ['name' => 'done.Actions', 'value' => $expectedValue],
-            ],
-        ], $this->getAvailableArchives());
-    }
-
-    public function getNamesOfRangeInvalidations(): iterable
-    {
-        yield 'all plugins' => [null, ArchiveWriter::DONE_INVALIDATED];
-        yield 'a plugin' => ['ExamplePlugin', ArchiveWriter::DONE_INVALIDATED];
-        yield 'a single report' => ['ExamplePlugin.someData', ArchiveWriter::DONE_OK];
-        // marks the plugin's archives, as an empty report does
-        yield 'a plugin with an empty report' => ['ExamplePlugin.', ArchiveWriter::DONE_INVALIDATED];
     }
 
     public function testMarkArchivesAsInvalidatedAddsInvalidationEntriesButDoesNotMarkArchivesAsInvalidatedIfArchiveIsPartial()
