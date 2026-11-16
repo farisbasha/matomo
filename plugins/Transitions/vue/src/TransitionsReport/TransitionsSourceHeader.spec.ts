@@ -51,13 +51,6 @@ vi.mock('CoreHome', async () => {
       emits: ['yes', 'closeEnd', 'update:modelValue'],
       template: '<div class="matomoDialog"><slot /></div>',
     },
-    MatomoUrl: {
-      parsed: { value: { period: 'year', date: '2025-01-01' } },
-      stringify: (params: Record<string, unknown>) => Object.entries(params)
-        .filter(([, value]) => value !== undefined && value !== '')
-        .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
-        .join('&'),
-    },
     NumberFormatter: {
       formatNumber: (value: number) => String(value),
     },
@@ -323,21 +316,25 @@ describe('Transitions/TransitionsSourceHeader', () => {
         .toBe('Transitions_PreprocessThisPageHelp');
       const helpId = wrapper.find('.transitionsSourceHeader__toggle').attributes('aria-describedby');
       expect(wrapper.find(`#${helpId}`).text()).toBe('Transitions_PreprocessThisPageHelp');
-      expect(wrapper.find('.transitionsSourceHeader__manageLink').exists()).toBe(false);
+      expect(wrapper.find('.transitionsSourceHeader__limit').exists()).toBe(false);
     });
 
-    it('should explain the limit instead of the toggle and link to the admin page', async () => {
+    it('should show a short limit label instead of the toggle, explained in its tooltip', async () => {
       state.fetch.mockResolvedValue(status({ used: 20 }));
       const wrapper = await mountHeader();
 
       expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
-      expect(wrapper.find('.transitionsSourceHeader__limit').text())
-        .toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
       expect(wrapper.find('.transitionsSourceHeader__usage').exists()).toBe(false);
+      expect(wrapper.find('a').exists()).toBe(false);
 
-      const link = wrapper.find('.transitionsSourceHeader__manageLink');
-      expect(link.text()).toBe('Transitions_ManagePreprocessedPages');
-      expect(link.attributes('href')).toBe('?module=Transitions&action=manage&idSite=1&period=year&date=2025-01-01');
+      const label = wrapper.find('.transitionsSourceHeader__limit');
+      expect(label.text()).toBe('Transitions_PreprocessedPagesLimitReachedShort');
+      expect(label.element.tagName).toBe('SPAN');
+      // the explanation, as a tooltip and for screen readers; reachable by keyboard like the badge
+      expect(label.attributes('title')).toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
+      expect(label.attributes('tabindex')).toBe('0');
+      expect(wrapper.find(`#${label.attributes('aria-describedby')}`).text())
+        .toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
     });
 
     it.each([
@@ -349,7 +346,10 @@ describe('Transitions/TransitionsSourceHeader', () => {
       const wrapper = await mountHeader();
 
       expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
-      expect(wrapper.find('.transitionsSourceHeader__limit').text()).toBe(help);
+      const label = wrapper.find('.transitionsSourceHeader__limit');
+      expect(label.text()).toBe('Transitions_PreprocessedPagesLimitReachedShort');
+      expect(label.attributes('title')).toBe(help);
+      expect(wrapper.find(`#${label.attributes('aria-describedby')}`).text()).toBe(help);
     });
 
     it('should add the page and say how far back it is prepared', async () => {
@@ -409,7 +409,9 @@ describe('Transitions/TransitionsSourceHeader', () => {
     });
 
     it('should read the status again when adding fails, eg as another admin reached the limit', async () => {
-      state.post.mockRejectedValue(new Error("This website's limit of pre-processed pages (20) is reached. Remove a page to add another one."));
+      state.post.mockRejectedValue(new Error(
+        "This website's limit of pre-processed pages (20) is reached. Remove a page to add another one.",
+      ));
       const wrapper = await mountHeader();
 
       state.fetch.mockResolvedValue(status({ used: 20 }));
@@ -417,12 +419,12 @@ describe('Transitions/TransitionsSourceHeader', () => {
       await flushPromises();
 
       expect(statusRequests()).toHaveLength(2);
-      // the limit text replaces the toggle and says why, so the error isn't repeated
-      expect(wrapper.find('.transitionsSourceHeader__error').exists()).toBe(false);
+      // the short limit label replaces the toggle; the error of the click says why
+      expect(wrapper.find('.transitionsSourceHeader__error').text())
+        .toBe("This website's limit of pre-processed pages (20) is reached. Remove a page to add another one.");
       expect(wrapper.find('.transitionsSourceHeader__toggle').exists()).toBe(false);
       expect(wrapper.find('.transitionsSourceHeader__limit').text())
-        .toBe('Transitions_PreprocessedPagesLimitReachedHelp:20');
-      expect(wrapper.find('.transitionsSourceHeader__manageLink').exists()).toBe(true);
+        .toBe('Transitions_PreprocessedPagesLimitReachedShort');
     });
 
     it('should read the status again when adding fails, eg as another admin added the page', async () => {

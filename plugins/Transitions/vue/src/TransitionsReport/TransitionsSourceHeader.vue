@@ -42,11 +42,16 @@
         </button>
 
         <template v-else-if="isLimitReached">
-          <span class="transitionsSourceHeader__limit">{{ limitReachedHelp }}</span>
-          <a
-            class="transitionsSourceHeader__manageLink"
-            :href="manageUrl"
-          >{{ translate('Transitions_ManagePreprocessedPages') }}</a>
+          <span
+            class="transitionsSourceHeader__limit"
+            tabindex="0"
+            :title="limitReachedHelp"
+            :aria-describedby="limitHelpId"
+          >{{ translate('Transitions_PreprocessedPagesLimitReachedShort') }}</span>
+          <span
+            :id="limitHelpId"
+            class="u-visuallyHidden"
+          >{{ limitReachedHelp }}</span>
         </template>
 
         <template v-else>
@@ -117,7 +122,6 @@ import {
   AjaxHelper,
   Matomo,
   MatomoDialog,
-  MatomoUrl,
   NumberFormatter,
   translate,
 } from 'CoreHome';
@@ -191,6 +195,7 @@ export default defineComponent({
     instanceCount += 1;
     return {
       addHelpId: `transitionsSourceHeaderAdd${instanceCount}`,
+      limitHelpId: `transitionsSourceHeaderLimit${instanceCount}`,
       badgeHelpId: `transitionsSourceHeaderBadge${instanceCount}`,
       // each status load starts a generation; a response of an older one is dropped
       statusLoads: { latest: 0 },
@@ -300,15 +305,6 @@ export default defineComponent({
     confirmLabel(): string {
       return stopConfirmLabel(this.actionName);
     },
-    manageUrl(): string {
-      return `?${MatomoUrl.stringify({
-        module: 'Transitions',
-        action: 'manage',
-        idSite: this.idSite,
-        period: MatomoUrl.parsed.value.period as string,
-        date: MatomoUrl.parsed.value.date as string,
-      })}`;
-    },
   },
   methods: {
     /**
@@ -398,11 +394,6 @@ export default defineComponent({
         if (this.isCurrent(load)) {
           this.error = apiErrorText(error);
           return this.fetchStatus(load).then(() => {
-            if (this.isLimitReached) {
-              // the limit text that replaced the toggle says it already
-              this.error = '';
-            }
-
             this.isSaving = false;
             this.focusToggle();
           });
@@ -424,7 +415,7 @@ export default defineComponent({
         this.focusToggle();
       }
     },
-    /** The toggle, or the link to the admin page when the limit took its place. */
+    /** The toggle, or the limit label when the limit took its place. */
     focusToggle() {
       if (this.isStopDialogOpen) {
         return;
@@ -432,7 +423,7 @@ export default defineComponent({
 
       this.$nextTick(() => {
         (this.$el as HTMLElement).querySelector<HTMLElement>(
-          '.transitionsSourceHeader__toggle, .transitionsSourceHeader__manageLink',
+          '.transitionsSourceHeader__toggle, .transitionsSourceHeader__limit',
         )?.focus();
       });
     },
