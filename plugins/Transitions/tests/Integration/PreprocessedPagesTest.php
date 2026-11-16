@@ -625,6 +625,47 @@ class PreprocessedPagesTest extends IntegrationTestCase
         self::assertSame(['Transitions.lastCronArchiving_1'], array_keys(Option::getLike('Transitions.lastCronArchiving%')));
     }
 
+    /**
+     * Upgraded installs can have tables of different collations, so the logins are never compared across tables.
+     */
+    public function testLoginsAreMatchedAlsoWhenThePagesTableHasAnotherCollationThanTheUserTable(): void
+    {
+        $pages = Common::prefixTable('transitions_preprocessed_page');
+        $userCollation = Db::fetchOne(
+            'SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [Common::prefixTable('user')]
+        );
+        $pagesCollation = Db::fetchOne(
+            'SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$pages]
+        );
+        $otherCollation = $userCollation === 'utf8mb4_unicode_ci' ? 'utf8mb4_general_ci' : 'utf8mb4_unicode_ci';
+        Db::query("ALTER TABLE `$pages` CONVERT TO CHARACTER SET utf8mb4 COLLATE $otherCollation");
+
+        try {
+            UsersManagerAPI::getInstance()->addUser('alice', 'secret-password-1', 'alice@example.com');
+            UsersManagerAPI::getInstance()->addUser('bob', 'secret-password-2', 'bob@example.com');
+            FakeAccess::clearAccess(false, [1], [], 'alice');
+            self::assertSame('alice', $this->api->addPreprocessedPage(1, 'https://example.com/a')['created_by']);
+            FakeAccess::clearAccess(false, [1], [], 'bob');
+            $this->api->addPreprocessedPage(1, 'https://example.com/b');
+            FakeAccess::clearAccess(false, [1], [], 'deletedMeanwhile');
+            self::assertNull($this->api->addPreprocessedPage(1, 'https://example.com/c')['created_by']);
+
+            // as if the plugin was deactivated while alice was deleted and bob's login registered again
+            Db::query('DELETE FROM ' . Common::prefixTable('user') . ' WHERE login = ?', ['alice']);
+            Db::query('UPDATE ' . Common::prefixTable('user') . ' SET date_registered = ? WHERE login = ?', ['2037-01-01 00:00:00', 'bob']);
+            PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
+
+            self::assertSame(
+                [['created_by' => null], ['created_by' => null], ['created_by' => null]],
+                Db::fetchAll("SELECT created_by FROM `$pages` ORDER BY idpage")
+            );
+        } finally {
+            Db::query("ALTER TABLE `$pages` CONVERT TO CHARACTER SET utf8mb4 COLLATE $pagesCollation");
+        }
+    }
+
     public function testAddingAPageSchedulesReArchivingOfOnlyThatPage(): void
     {
         $this->trackPageview('http://example.com/tracked');

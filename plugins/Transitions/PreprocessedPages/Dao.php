@@ -281,10 +281,14 @@ class Dao
      */
     public function clearCreatedByOfDeletedUser(int $idPage): bool
     {
+        $createdBy = Db::fetchOne('SELECT created_by FROM ' . $this->getTable() . ' WHERE idpage = ?', [$idPage]);
+        if (!is_string($createdBy) || $this->getRegistrationDates([$createdBy]) !== []) {
+            return false;
+        }
+
         $statement = Db::query(
-            'UPDATE ' . $this->getTable() . ' SET created_by = NULL WHERE idpage = ? AND created_by IS NOT NULL'
-            . ' AND created_by NOT IN (SELECT login FROM ' . Common::prefixTable('user') . ')',
-            [$idPage]
+            'UPDATE ' . $this->getTable() . ' SET created_by = NULL WHERE idpage = ? AND created_by = ?',
+            [$idPage, $createdBy]
         );
 
         return $statement->rowCount() > 0;
@@ -295,21 +299,55 @@ class Dao
      */
     public function cleanUpDeletedUsersAndSites(): void
     {
-        $this->writeIfTableExists(
-            'UPDATE ' . $this->getTable() . ' SET created_by = NULL WHERE created_by IS NOT NULL'
-            . ' AND created_by NOT IN (SELECT login FROM ' . Common::prefixTable('user') . ')',
-            []
-        );
-        // a login created again after the page was added belongs to someone else; both dates are written as UTC strings
-        $this->writeIfTableExists(
-            'UPDATE ' . $this->getTable() . ' p JOIN ' . Common::prefixTable('user') . ' u ON u.login = p.created_by'
-            . ' SET p.created_by = NULL WHERE u.date_registered > p.created_date',
-            []
-        );
+        try {
+            $logins = array_map('strval', array_column(
+                Db::fetchAll('SELECT DISTINCT created_by FROM ' . $this->getTable() . ' WHERE created_by IS NOT NULL'),
+                'created_by'
+            ));
+        } catch (\Exception $e) {
+            if (!$this->isErrNo($e, Migration\Db::ERROR_CODE_TABLE_NOT_EXISTS)) {
+                throw $e;
+            }
+            $logins = [];
+        }
+
+        $registrationDates = $this->getRegistrationDates($logins);
+        foreach ($logins as $login) {
+            if (!array_key_exists($login, $registrationDates)) {
+                $this->writeIfTableExists('UPDATE ' . $this->getTable() . ' SET created_by = NULL WHERE created_by = ?', [$login]);
+            } elseif ($registrationDates[$login] !== null) {
+                // a login created again after the page was added belongs to someone else; both dates are UTC strings
+                $this->writeIfTableExists(
+                    'UPDATE ' . $this->getTable() . ' SET created_by = NULL WHERE created_by = ? AND created_date < ?',
+                    [$login, $registrationDates[$login]]
+                );
+            }
+        }
+
         $this->writeIfTableExists(
             'DELETE FROM ' . $this->getTable() . ' WHERE idsite NOT IN (SELECT idsite FROM ' . Common::prefixTable('site') . ')',
             []
         );
+    }
+
+    /**
+     * Looks the logins up in the user table alone, so no comparison depends on the collations of both tables, which
+     * may differ on upgraded installs. Logins match as the user table matches them.
+     *
+     * @param list<string> $logins
+     * @return array<string, string|null> by given login of an existing user, its registration date (UTC)
+     */
+    private function getRegistrationDates(array $logins): array
+    {
+        $registrationDates = [];
+        foreach (array_unique($logins) as $login) {
+            $row = Db::fetchRow('SELECT date_registered FROM ' . Common::prefixTable('user') . ' WHERE login = ?', [$login]);
+            if (!empty($row)) {
+                $registrationDates[$login] = isset($row['date_registered']) ? (string) $row['date_registered'] : null;
+            }
+        }
+
+        return $registrationDates;
     }
 
     /**
