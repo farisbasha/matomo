@@ -17,6 +17,7 @@ The Product Changelog at **[matomo.org/changelog](https://matomo.org/changelog)*
 * The Monolog plugin's DI entry `log.formatter.classes` maps log format names to formatter classes and can be extended by plugins to add log formats.
 
 ### Deprecations
+* `Piwik\Tracker\Response::logExceptionToErrorLog()` is deprecated and will be removed in Matomo 7, as tracker errors are logged through the configured log writers.
 * The `disabled` class on a `.mtm-selector` is deprecated and will be removed in Matomo 7; use the `mtm-selector--disabled` modifier instead.
 * `Piwik\DataAccess\Model::isSimilarArchiveInProgress()` is deprecated and will be removed in Matomo 7; use `Piwik\DataAccess\Model::isArchiveAlreadyInProgress()` instead.
 
@@ -33,7 +34,7 @@ The Product Changelog at **[matomo.org/changelog](https://matomo.org/changelog)*
 * Different `core:archive` processes can now archive "All visits" and segments of the same site and an overlapping period at the same time. State that an archiver shares across a site's segments must therefore also be safe to use while the "All visits" archive is processed.
 
 ### Other changes
-* The tracking endpoint now answers server errors, such as a `TypeError` or a failing `Tracker.newHandler` listener, with `500` and logs them, and no longer writes `4xx` rejections to PHP's error log.
+* The tracking endpoint now answers server errors, such as a `TypeError` or a failing `Tracker.newHandler` listener, with `500` and logs them only through the configured log writers instead of also writing client and server errors to PHP's error log directly. With only the default `screen` writer, which tracking requests can't use, they log to PHP's error log.
 * An exception implementing `Piwik\Http\HttpCodeException` thrown while tracking, except `PluginDeactivatedException` and `PluginNotFoundException`, is now answered with its status code (`400`, `401`, `403`, `404`, `429` or `503`; other `4xx` codes with `400`) instead of `500`; with a `4xx` code other than `429` it is counted as invalid in a bulk request.
 * The JavaScript `AjaxHelper` now handles an API error answered with a 4xx status like one answered with status `200`, unless an error callback set via `setErrorCallback()` handles it.
 
