@@ -571,16 +571,18 @@ class API extends \Piwik\Plugin\API
      *
      * @param int $idSite The numeric ID of the website.
      * @param int $idPage The ID of the page, as returned by `getPreprocessedPages`.
+     * @return array{idpage: int, url: string, created_date: string, created_by: string|null, created_by_superuser: bool}
+     *         The removed page as it was before, as returned by `getPreprocessedPages`.
      * @throws \Piwik\Plugins\Transitions\PreprocessedPages\PreprocessedPagesBusyException (409) while another page
      *                                                                                    of the website is added or
      *                                                                                    removed
      */
-    public function removePreprocessedPage(int $idSite, int $idPage): void
+    public function removePreprocessedPage(int $idSite, int $idPage): array
     {
         Piwik::checkUserHasAdminAccess($idSite);
         new Site($idSite);
 
-        StaticContainer::get(PreprocessedPagesService::class)->removePage($idSite, $idPage);
+        return StaticContainer::get(PreprocessedPagesService::class)->removePage($idSite, $idPage);
     }
 
     /**

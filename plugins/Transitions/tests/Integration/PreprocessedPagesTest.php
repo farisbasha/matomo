@@ -566,6 +566,29 @@ class PreprocessedPagesTest extends IntegrationTestCase
         self::assertSame([['https://example.com/b', null, true], ['https://example.com/a', 'alice', false]], $creators());
     }
 
+    /**
+     * The removed page is returned as the list showed it, for example for the activity log of
+     * `API.Transitions.removePreprocessedPage.end`.
+     */
+    public function testRemovingAPageReturnsItAsItWasListed(): void
+    {
+        UsersManagerAPI::getInstance()->addUser('alice', 'secret-password-1', 'alice@example.com');
+        UsersManagerAPI::getInstance()->addUser('root', 'secret-password-2', 'root@example.com');
+        (new UsersModel())->setSuperUserAccess('root', true);
+        FakeAccess::clearAccess(false, [1], [], 'alice');
+        $added = $this->api->addPreprocessedPage(1, 'https://example.com/a');
+        FakeAccess::clearAccess(true, [], [], 'root');
+        $addedBySuperUser = $this->api->addPreprocessedPage(1, 'https://example.com/b');
+
+        FakeAccess::clearAccess(false, [1], [], 'alice');
+        $listed = array_column($this->api->getPreprocessedPages(1), null, 'idpage');
+        self::assertSame($listed[$added['idpage']], $this->api->removePreprocessedPage(1, $added['idpage']));
+        $removed = $this->api->removePreprocessedPage(1, $addedBySuperUser['idpage']);
+        self::assertSame($listed[$addedBySuperUser['idpage']], $removed);
+        self::assertSame(['https://example.com/b', null, true], [$removed['url'], $removed['created_by'], $removed['created_by_superuser']]);
+        self::assertSame([], $this->getUrls(1));
+    }
+
     public function testDeletingASiteRemovesItsPages(): void
     {
         $this->api->addPreprocessedPage(1, 'https://example.com/a');

@@ -147,7 +147,10 @@ class Service
     /**
      * A page that does not exist and one of another website are rejected alike.
      */
-    public function removePage(int $idSite, int $idPage): void
+    /**
+     * @return PreprocessedPageEntry the page as it was before it was removed
+     */
+    public function removePage(int $idSite, int $idPage): array
     {
         $locks = $this->lockPages($idSite);
 
@@ -164,6 +167,8 @@ class Service
         } finally {
             $this->unlock($locks);
         }
+
+        return $this->toEntry($page, $this->getSuperUserLogins($page['created_by'] === null ? [] : [$page['created_by']]));
     }
 
     /**
