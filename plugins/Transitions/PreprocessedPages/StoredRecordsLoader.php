@@ -37,10 +37,10 @@ use Piwik\Site;
  * - Without cron archiving, a requested single day without records is built for a selected page, and a longer period
  *   without records is summed from the stored records of its subperiods, down to days. Nothing else is built.
  * - Records read from an invalidated archive are never used: a longer period is summed from its subperiods instead,
- *   and a day is built where one of the above allows it; the records built then are used until the day is invalidated
- *   again (see {@link PartialArchives}). A day whose logs were deleted is never built. With browser archiving, the
- *   invalidations remembered for the days of the request, for example by the deletion of a data subject's visits, are
- *   applied first.
+ *   and a day is built where one of the above allows it. Partial archives, like other plugins' ones, are not
+ *   invalidated by core, so their records are used until a newer archive of the period replaces them. A day whose logs
+ *   were deleted is never built. With browser archiving, the invalidations remembered for the days of the request,
+ *   for example by the deletion of a data subject's visits, are applied first.
  *
  * Records are served and built for all visits and pre-processed segments only, as a partial archive of the page's
  * records. At most {@link MAX_SUMMED_PERIODS} periods are summed for a request.
@@ -104,7 +104,7 @@ final class StoredRecordsLoader
         }
         $site = new Site($idSite);
         // records of another segment may predate its last change, as nothing builds them
-        if (!Records::isBuiltForSegment($idSite, $segment) || $this->partialArchives->isCatchUpOnInvalidatedArchivesPending()) {
+        if (!Records::isBuiltForSegment($idSite, $segment)) {
             return null;
         }
         $this->applyRememberedInvalidations($site, $periods);
@@ -293,8 +293,8 @@ final class StoredRecordsLoader
     /**
      * Applies the invalidations remembered for the days of the periods, for example after a data subject's visits were
      * deleted, as browser archiving does before it reads archives. They are applied for all segments, as `core:archive`
-     * does, so they are forgotten afterwards. Applying them invalidates the Transitions records built in partial archives
-     * from the previous data, see {@link PartialArchives}, which are built again where allowed.
+     * does, so they are forgotten afterwards. Records read from the archives invalidated then are built again where
+     * allowed.
      *
      * @param list<Period> $periods
      */
@@ -379,9 +379,8 @@ final class StoredRecordsLoader
 
     /**
      * Builds the page's day records unless another request does or did meanwhile. A request waits for another one
-     * building the same records, and uses the stored records if that takes too long. Records built while the day was
-     * invalidated, maybe from the logs before the change, are deleted. Older records of the page built alone are
-     * deleted once the new ones are written. A day whose logs were deleted isn't built, so its stored records stay.
+     * building the same records, and uses the stored records if that takes too long. Older records of the page built
+     * alone are deleted once the new ones are written. A day whose logs were deleted isn't built, so its stored records stay.
      *
      * @param bool $isRefresh whether existing records are rebuilt, else missing ones are built
      * @return bool whether the records exist now, or, for a refresh, whether stored records may be served
@@ -433,15 +432,8 @@ final class StoredRecordsLoader
             }
             $cache->save($attemptId, 1, max(self::MIN_RETRY_AFTER_SECONDS, $this->getRefreshAfter($idSite)));
 
-            $invalidationMarker = $this->partialArchives->getInvalidationMarker($idSite);
             $idArchive = $this->archiveDay($site, $day, $segment, $idPage, $timeLimit, fn() => $lock->extendLock($lockTtl));
             $cache->delete($attemptId);
-
-            if ($this->partialArchives->getInvalidationMarker($idSite) !== $invalidationMarker) {
-                $this->partialArchives->deleteArchives($day, [$idArchive]);
-
-                return $isRefresh;
-            }
 
             $this->partialArchives->deleteOlderPartialArchivesOfPage($idSite, $day, $segment, $idPage, $idArchive);
         } catch (\Throwable $e) {

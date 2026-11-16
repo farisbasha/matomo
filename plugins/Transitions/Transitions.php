@@ -12,13 +12,9 @@ namespace Piwik\Plugins\Transitions;
 use Piwik\Common;
 use Piwik\Config;
 use Piwik\Container\StaticContainer;
-use Piwik\Log\LoggerInterface;
-use Piwik\Period;
 use Piwik\Piwik;
 use Piwik\Plugins\Transitions\PreprocessedPages\ArchivingMode;
 use Piwik\Plugins\Transitions\PreprocessedPages\Dao as PreprocessedPagesDao;
-use Piwik\Plugins\Transitions\PreprocessedPages\PartialArchives;
-use Piwik\Segment;
 
 class Transitions extends \Piwik\Plugin
 {
@@ -36,21 +32,16 @@ class Transitions extends \Piwik\Plugin
             'UsersManager.deleteUser'                => 'anonymizePreprocessedPagesCreatedBy',
             'SitesManager.deleteSite.end'            => 'deletePreprocessedPagesForSite',
             'CronArchive.archiveSingleSite.finish'   => 'rememberCronArchiving',
-            'Archiving.markArchivesAsInvalidated.end' => 'invalidatePartialArchivesOfPeriods',
         );
     }
 
     /**
-     * Catches up on users and websites deleted while the plugin was deactivated, and schedules the catch-up on archives
-     * invalidated meanwhile.
+     * Catches up on users and websites deleted while the plugin was deactivated.
      */
     public function activate()
     {
-        $partialArchives = StaticContainer::get(PartialArchives::class);
-        $partialArchives->scheduleCatchUpOnInvalidatedArchives();
         StaticContainer::get(PreprocessedPagesDao::class)->cleanUpDeletedUsersAndSites();
         ArchivingMode::forgetDeletedSites();
-        $partialArchives->forgetDeletedSites();
     }
 
     public function anonymizePreprocessedPagesCreatedBy(string $userLogin): void
@@ -62,7 +53,6 @@ class Transitions extends \Piwik\Plugin
     {
         StaticContainer::get(PreprocessedPagesDao::class)->deletePagesForSite($idSite);
         ArchivingMode::forgetSite($idSite);
-        StaticContainer::get(PartialArchives::class)->forgetSite($idSite);
     }
 
     /**
@@ -71,57 +61,6 @@ class Transitions extends \Piwik\Plugin
     public function rememberCronArchiving($idSite): void
     {
         ArchivingMode::rememberCronArchiving((int) $idSite);
-    }
-
-    /**
-     * Core doesn't invalidate partial archives, so the pre-processed pages' records built before an invalidation, for
-     * example of the visits of a deleted data subject, are no longer served once core applies it, see
-     * {@link PartialArchives}. Invalidations of another plugin's reports, or of single reports, leave them. A failure
-     * doesn't stop core's invalidation. Arguments of other types, and site IDs other than integers, are logged; a
-     * segment or name of another type stands for all segments or plugins, as no records may be served from the
-     * previous data.
-     *
-     * @param mixed $idSites
-     * @param mixed $periods
-     * @param mixed $segment
-     * @param mixed $name
-     */
-    public function invalidatePartialArchivesOfPeriods($idSites, $periods, $segment, $name): void
-    {
-        $isValidName = $name === null || is_string($name);
-        if ($isValidName && !empty($name) && $name !== 'Transitions') {
-            return;
-        }
-
-        $logger = StaticContainer::get(LoggerInterface::class);
-        $idSites = is_array($idSites) ? $idSites : [$idSites];
-        $periods = is_array($periods) ? $periods : [$periods];
-        $validIdSites = array_values(array_map('intval', array_filter(
-            $idSites,
-            fn($idSite): bool => is_int($idSite) || (is_string($idSite) && ctype_digit($idSite))
-        )));
-        $validPeriods = array_values(array_filter($periods, fn($period): bool => $period instanceof Period));
-        if (
-            !$isValidName
-            || count($validIdSites) !== count($idSites)
-            || count($validPeriods) !== count($periods)
-            || ($segment !== null && !$segment instanceof Segment)
-        ) {
-            $logger->error('Archiving.markArchivesAsInvalidated.end was posted with websites, periods, a segment or a name of another type.');
-        }
-
-        try {
-            StaticContainer::get(PartialArchives::class)->invalidateForPeriods(
-                $validIdSites,
-                $validPeriods,
-                $segment instanceof Segment ? $segment : null
-            );
-        } catch (\Throwable $e) {
-            $logger->error(
-                'Could not invalidate the pre-processed Transitions records of invalidated periods: {exception}',
-                ['exception' => $e]
-            );
-        }
     }
 
     public function getPagesComparisonsDisabledFor(&$pages)

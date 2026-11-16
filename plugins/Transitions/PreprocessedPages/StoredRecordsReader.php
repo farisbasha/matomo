@@ -36,8 +36,8 @@ use Piwik\Site;
  * the period was archived. Several periods, like the subperiods of a range, are covered when each of them is.
  *
  * A period whose records are read from an invalidated archive is not covered, as its data has changed since, for
- * example by the deletion of a data subject's visits. Partial archives built before core applied an invalidation are
- * marked invalidated then, unless that fails, see {@link PartialArchives}; records of a newer one are covered.
+ * example by the deletion of a data subject's visits. Partial archives, like other plugins' ones, are not invalidated
+ * by core: their records are covered until a newer archive of the period replaces them.
  */
 final class StoredRecordsReader
 {
@@ -206,7 +206,6 @@ final class StoredRecordsReader
         $archives = [];
         $pageRows = [];
         $siteRows = [];
-        $invalidatedRows = [];
         foreach ($this->groupByLabel($periods) as $label => $periodsOfLabel) {
             $archive = $this->buildArchive($idSite, $periodsOfLabel, $segment);
             if ($archive === null) {
@@ -215,8 +214,6 @@ final class StoredRecordsReader
 
             $archives[$label] = $archive;
             $pageRows += $this->getNumericRows($archive, array_values($numericNames));
-            // read alone, as a record read with others makes them 0 where they don't exist
-            $invalidatedRows += $this->getNumericRows($archive, [Records::INVALIDATED]);
             if ($label !== 'day') {
                 $siteRows += $this->getNumericRows($archive, [Records::DAYS_WITH_VISITS]);
             }
@@ -252,10 +249,7 @@ final class StoredRecordsReader
             }
 
             $coverage[$rangeString] = $tsArchived;
-            if (
-                $this->getMetadata($pageRows[$rangeString], DataTable::ARCHIVE_STATE_METADATA_NAME) === ArchiveState::INVALIDATED
-                || $this->getValue($invalidatedRows, $period, Records::INVALIDATED) > 0
-            ) {
+            if ($this->getMetadata($pageRows[$rangeString], DataTable::ARCHIVE_STATE_METADATA_NAME) === ArchiveState::INVALIDATED) {
                 $possiblyInvalidated[] = $period;
             }
         }
@@ -272,7 +266,6 @@ final class StoredRecordsReader
     /**
      * An invalidated archive among those of a period may be older than the one the page's records are read from, like
      * a partial archive built after the invalidation. The records are read from the newest archive that has them.
-     * Partial archives marked {@link Records::INVALIDATED} count as invalidated.
      *
      * @param list<Period> $periods periods for which one of the archives read is invalidated
      * @param array<string, array<mixed>> $pageRows the page's numeric rows by period range string
@@ -282,13 +275,11 @@ final class StoredRecordsReader
     {
         [, $statesBySite] = ArchiveSelector::getArchiveIdsAndStates([$idSite], $periods, $segment, ['Transitions']);
 
-        $idArchives = [];
         $invalidatedIdArchives = [];
         foreach ($statesBySite as $statesByDoneFlag) {
             foreach ($statesByDoneFlag as $statesByPeriod) {
                 foreach ($statesByPeriod as $statesByIdArchive) {
                     foreach ($statesByIdArchive as $idArchive => $state) {
-                        $idArchives[] = (int) $idArchive;
                         if ($state === ArchiveWriter::DONE_INVALIDATED) {
                             $invalidatedIdArchives[] = (int) $idArchive;
                         }
@@ -296,7 +287,7 @@ final class StoredRecordsReader
                 }
             }
         }
-        if (empty($idArchives)) {
+        if (empty($invalidatedIdArchives)) {
             return [];
         }
 
@@ -311,10 +302,8 @@ final class StoredRecordsReader
         $invalidated = [];
         foreach ($periodsByTable as $table => $periodsOfTable) {
             $rows = Db::fetchAll(
-                'SELECT r.date1, r.date2, r.ts_archived FROM ' . $table . ' r WHERE r.idarchive IN (' . implode(',', $idArchives) . ') AND r.name = ?'
-                . ' AND (r.idarchive IN (' . implode(',', $invalidatedIdArchives ?: [0]) . ')'
-                . ' OR EXISTS (SELECT 1 FROM ' . $table . ' m WHERE m.idarchive = r.idarchive AND m.name = ? AND m.value > 0))',
-                [$recordName, Records::INVALIDATED]
+                'SELECT r.date1, r.date2, r.ts_archived FROM ' . $table . ' r WHERE r.idarchive IN (' . implode(',', $invalidatedIdArchives) . ') AND r.name = ?',
+                [$recordName]
             );
             foreach ($periodsOfTable as $period) {
                 $rangeString = $period->getRangeString();

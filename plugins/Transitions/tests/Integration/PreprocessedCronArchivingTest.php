@@ -19,7 +19,6 @@ use Piwik\Common;
 use Piwik\Config;
 use Piwik\Container\StaticContainer;
 use Piwik\CronArchive;
-use Piwik\CronArchive\ArchiveFilter;
 use Piwik\CronArchive\ReArchiveList;
 use Piwik\DataAccess\ArchiveTableCreator;
 use Piwik\DataAccess\ArchiveWriter;
@@ -28,13 +27,10 @@ use Piwik\Db;
 use Piwik\Log\LoggerInterface;
 use Piwik\Period\Factory as PeriodFactory;
 use Piwik\Piwik;
-use Piwik\Plugin\Manager as PluginManager;
 use Piwik\Plugins\PrivacyManager\API as PrivacyManagerAPI;
 use Piwik\Plugins\SegmentEditor\API as SegmentEditorAPI;
 use Piwik\Plugins\Transitions\API;
-use Piwik\Plugins\Transitions\PreprocessedPages\PartialArchives;
 use Piwik\Plugins\Transitions\PreprocessedPages\Records;
-use Piwik\Plugins\Transitions\Tasks;
 use Piwik\Segment;
 use Piwik\Tests\Framework\Fixture;
 use Piwik\Tests\Framework\Mock\FakeLogger;
@@ -401,109 +397,6 @@ class PreprocessedCronArchivingTest extends IntegrationTestCase
         self::assertStringNotContainsString('Start processing archives for site 1.', $output);
         self::assertSame([], Db::fetchAll($singleReportsOfSites));
         self::assertNotNull($this->getStoredNumeric(2, 'done.Actions', 'Actions_hits', 'day', self::getFirstDay()));
-    }
-
-    /**
-     * The week, month and year summed from a marked day aren't archived again in every run while the day isn't, as
-     * with --force-periods without day: they queue nothing themselves. Archiving the day again queues them once, for
-     * each segment, and they are no longer marked then. The year holds today, so `core:archive` deletes its queued
-     * invalidation as usable until its archive is outdated, and it is built again with today's.
-     */
-    public function testLongerPeriodsOfAMarkedDayAreArchivedAgainOnlyOnceTheDayIs(): void
-    {
-        API::getInstance()->addPreprocessedPage(1, self::NEW_PAGE_URL);
-        self::runCoreArchive();
-        $day = self::getFirstDay();
-        // as the plugin's own re-archiving does, which marks the page's partial archives of the day, for all visits and
-        // for the segment
-        $invalidator = StaticContainer::get(ArchiveInvalidator::class);
-        $invalidator->markArchivesAsInvalidated([1], [$day], 'day', null, false, false, 'Transitions');
-        $invalidator->markArchivesAsInvalidated([1], [$day], 'day', new Segment(self::SEGMENT, [1]), false, false, 'Transitions');
-
-        $forcePeriods = function (CronArchive $cronArchive): void {
-            $archiveFilter = new ArchiveFilter();
-            $archiveFilter->setRestrictToPeriods('week,month,year');
-            $cronArchive->setArchiveFilter($archiveFilter);
-        };
-        // the archiving requests queue on the real clock, so each run starts later
-        Date::$now = time();
-        $longerPeriodsArchived = [];
-        for ($i = 0; $i < 3; $i++) {
-            Date::$now += 60;
-            $longerPeriodsArchived[] = $this->countLongerPeriodsOfTransitionsArchived(self::runCoreArchive(null, $forcePeriods));
-        }
-        // the week and month of both segments, once
-        self::assertGreaterThanOrEqual(4, $longerPeriodsArchived[0]);
-        self::assertSame([0, 0], array_slice($longerPeriodsArchived, 1));
-        self::assertSame(['week', 'month', 'year'], $this->getMarkedPeriodLabels($day, ''));
-        self::assertSame(['week', 'month', 'year'], $this->getMarkedPeriodLabels($day, self::SEGMENT));
-
-        // the day is archived again, which queues them once
-        Date::$now = max(Date::$now, time());
-        $longerPeriodsArchived = [];
-        for ($i = 0; $i < 4; $i++) {
-            Date::$now += 60;
-            $longerPeriodsArchived[] = $this->countLongerPeriodsOfTransitionsArchived(self::runCoreArchive());
-        }
-        self::assertGreaterThanOrEqual(4, array_sum($longerPeriodsArchived));
-        self::assertSame([0, 0], array_slice($longerPeriodsArchived, 2));
-        self::assertSame([], array_diff($this->getMarkedPeriodLabels($day, ''), ['year']));
-        self::assertSame([], array_diff($this->getMarkedPeriodLabels($day, self::SEGMENT), ['year']));
-    }
-
-    /**
-     * While the catch-up is pending, longer periods are built marked but queue nothing, so they aren't archived again in
-     * every run; the catch-up queues them once it has finished.
-     */
-    public function testLongerPeriodsBuiltWhileTheCatchUpIsPendingAreArchivedAgainOnceItHasFinished(): void
-    {
-        API::getInstance()->addPreprocessedPage(1, self::NEW_PAGE_URL);
-        self::runCoreArchive();
-        $day = self::getFirstDay();
-        PluginManager::getInstance()->getLoadedPlugin('Transitions')->activate();
-        StaticContainer::get(ArchiveInvalidator::class)->markArchivesAsInvalidated([1], [$day], 'day', null, false, false, 'Transitions');
-
-        Date::$now = time();
-        $longerPeriodsArchived = [];
-        for ($i = 0; $i < 3; $i++) {
-            Date::$now += 60;
-            $longerPeriodsArchived[] = $this->countLongerPeriodsOfTransitionsArchived(self::runCoreArchive());
-        }
-        self::assertGreaterThanOrEqual(2, $longerPeriodsArchived[0]);
-        self::assertSame([0, 0], array_slice($longerPeriodsArchived, 1));
-        self::assertContains('week', $this->getMarkedPeriodLabels($day, ''));
-
-        (new Tasks())->catchUpOnInvalidatedArchives();
-
-        $longerPeriodsArchived = [];
-        for ($i = 0; $i < 3; $i++) {
-            Date::$now = max(Date::$now, time()) + 60;
-            $longerPeriodsArchived[] = $this->countLongerPeriodsOfTransitionsArchived(self::runCoreArchive());
-        }
-        self::assertGreaterThanOrEqual(2, $longerPeriodsArchived[0]);
-        self::assertSame([0, 0], array_slice($longerPeriodsArchived, 1));
-        self::assertSame([], array_diff($this->getMarkedPeriodLabels($day, ''), ['year']));
-    }
-
-    private function countLongerPeriodsOfTransitionsArchived(string $output): int
-    {
-        return preg_match_all('/^Processing invalidation: .*idsite = 1, period = (week|month|year)\(.*name = done[^,]*\.Transitions,/m', $output);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function getMarkedPeriodLabels(Date $day, string $segment): array
-    {
-        $periods = [];
-        foreach (['week', 'month', 'year'] as $label) {
-            $periods[] = PeriodFactory::build($label, $day);
-        }
-
-        return array_map(
-            fn($period) => $period->getLabel(),
-            StaticContainer::get(PartialArchives::class)->getMarkedPeriods(1, $periods, new Segment($segment, [1]))
-        );
     }
 
     private static function getFirstDay(): Date
