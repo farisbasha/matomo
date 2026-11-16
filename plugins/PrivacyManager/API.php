@@ -223,7 +223,7 @@ class API extends \Piwik\Plugin\API
      *                        Supports AND (;) and OR (,) operators.
      * @return array{}|DataTable Matching visitor details with a reduced column set (identity, device,
      *                           location, and browser info), and the consent stored for the visit (1 when the
-     *                           visitor consented, 0 when they refused, empty when none is stored). Returns an
+     *                           visitor consented, otherwise the stored value or empty when none is stored). Returns an
      *                           empty array when no sites qualify.
      */
     public function findDataSubjects($idSite, string $segment)

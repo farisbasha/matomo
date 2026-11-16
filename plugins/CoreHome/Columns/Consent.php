@@ -20,12 +20,11 @@ use Piwik\Plugin\Dimension\VisitDimension;
 use Piwik\Segment\SegmentExpression;
 
 /**
- * Whether the visitor consented (1), refused (0) or never reported a decision (NULL) during the visit.
+ * Whether the visitor had given their consent during the visit (1), or not (NULL).
  *
  * The consentState segment compares the state name, with unknown as an empty string, so that a visit without
- * a stored value can be matched as unknown and an empty segment value (consentState==) matches unknown as it does
- * for any other segment. As the expression is not a plain log_visit column, != on archived reports is resolved
- * through an idvisit subquery, like the other function-wrapped visit segments.
+ * consent can be matched as unknown and an empty segment value (consentState==) matches unknown as it does for
+ * any other segment. A refusal is not recorded, so it is not offered as a state of its own.
  */
 class Consent extends VisitDimension
 {
@@ -43,7 +42,6 @@ class Consent extends VisitDimension
 
     private const SEGMENT_VALUES = [
         'consented' => 'consented',
-        'refused' => 'refused',
         'unknown' => '',
     ];
 
@@ -51,8 +49,8 @@ class Consent extends VisitDimension
     protected $columnType = self::COLUMN_TYPE;
     protected $segmentName = 'consentState';
     protected $nameSingular = 'CoreHome_ConsentState';
-    protected $sqlSegment = "CASE log_visit.consent WHEN 1 THEN 'consented' WHEN 0 THEN 'refused' ELSE '' END";
-    protected $acceptValues = 'consented, refused, unknown';
+    protected $sqlSegment = "CASE log_visit.consent WHEN 1 THEN 'consented' ELSE '' END";
+    protected $acceptValues = 'consented, unknown';
     protected $type = self::TYPE_ENUM;
 
     public function __construct()
@@ -81,9 +79,7 @@ class Consent extends VisitDimension
     {
         if ($value === 1 || $value === '1' || $value === 'consented') {
             return Piwik::translate('CoreHome_ConsentStateConsented');
-        } elseif ($value === 0 || $value === '0' || $value === 'refused') {
-            return Piwik::translate('CoreHome_ConsentStateRefused');
-        } elseif ($value === null || $value === '' || $value === 'unknown') {
+        } elseif ($value === null || $value === '' || $value === 0 || $value === '0' || $value === 'unknown') {
             return Piwik::translate('General_Unknown');
         }
 
