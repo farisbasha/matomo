@@ -287,7 +287,10 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         self::assertSame(0, $this->countPartialArchives(self::TODAY));
     }
 
-    public function testAPartialArchiveIsDeletedOnceTheDayIsArchivedAgain(): void
+    /**
+     * Partial archives older than an archive for all plugins are kept, like other plugins' ones, but no longer read.
+     */
+    public function testAPartialArchiveIsNotServedOnceTheDayIsArchivedAgain(): void
     {
         $this->setBrowserArchiving(false);
         $idPage = $this->selectPage(self::PAGE_URL);
@@ -302,11 +305,7 @@ class PreprocessedFreshnessTest extends IntegrationTestCase
         $this->setNow(self::TODAY . ' 12:40:00');
         $this->archive($idPage, 'day', self::TODAY);
 
-        self::assertSame(0, $this->countPartialArchives(self::TODAY));
-        self::assertSame(0, (int) Db::fetchOne(
-            'SELECT COUNT(*) FROM ' . Common::prefixTable('archive_blob_2010_03') . ' WHERE idsite = 1 AND period = 1 AND date1 = ? AND ts_archived = ?',
-            [self::TODAY, self::TODAY . ' 12:20:00']
-        ));
+        self::assertSame(1, $this->countPartialArchives(self::TODAY));
         $report = $this->request('day', self::TODAY);
         self::assertSame($refreshed['pageMetrics'], $report['pageMetrics']);
         self::assertSame(self::TODAY . ' 12:40:00', $report['preprocessedAt']);

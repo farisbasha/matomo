@@ -33,8 +33,6 @@ use Piwik\Log\LoggerInterface;
  */
 class Model
 {
-    private const SITES_PER_PARTIAL_ARCHIVE_SCAN = 100;
-
     /**
      * @var LoggerInterface
      */
@@ -49,7 +47,6 @@ class Model
      * Returns the archives IDs that have already been invalidated and have been since re-processed.
      *
      * These archives { archive name (includes segment hash) , idsite, date, period } will be deleted.
-     * Partial archives of a plugin that a newer usable archive for all plugins replaces are returned too.
      *
      * @param string $archiveTable
      * @param bool $setGroupContentMaxLen for tests only
@@ -108,47 +105,6 @@ class Model
                     $archiveIds[] = $idarchive; // does not matter what the value is, the latest is usable so older archives can be purged
                 }
             }
-        }
-
-        // also those finished after the finalize of the newer archive for all plugins deleted the older ones
-        $partialArchiveIds = $this->getPartialArchiveIdsOlderThanUsableFullArchive($archiveTable);
-
-        return array_values(array_unique(array_merge($archiveIds, $partialArchiveIds)));
-    }
-
-    /**
-     * Partial archives of a plugin (done<hash>.<Plugin>) are read only until a newer usable archive for all plugins
-     * (done<hash>) exists for the same site, period and segment, see ArchiveSelector. Older ones are never read again.
-     *
-     * The table is read for some of its sites at a time, so only the archives to delete are held in memory.
-     *
-     * @return string[]
-     */
-    private function getPartialArchiveIdsOlderThanUsableFullArchive(string $archiveTable): array
-    {
-        $usableValues = implode(',', [ArchiveWriter::DONE_OK, ArchiveWriter::DONE_OK_TEMPORARY, ArchiveWriter::DONE_INVALIDATED]);
-
-        $idSites = array_map('intval', array_column(Db::fetchAll("SELECT DISTINCT idsite FROM `$archiveTable`"), 'idsite'));
-
-        $archiveIds = [];
-        foreach (array_chunk($idSites, self::SITES_PER_PARTIAL_ARCHIVE_SCAN) as $idSitesOfChunk) {
-            $sql = "SELECT DISTINCT partial.idarchive
-                      FROM `$archiveTable` partial
-                      JOIN `$archiveTable` fullarchive
-                        ON fullarchive.idsite = partial.idsite
-                       AND fullarchive.date1 = partial.date1
-                       AND fullarchive.date2 = partial.date2
-                       AND fullarchive.period = partial.period
-                       AND fullarchive.name = SUBSTRING_INDEX(partial.name, '.', 1)
-                       AND fullarchive.value IN ($usableValues)
-                       AND fullarchive.ts_archived >= partial.ts_archived
-                       AND fullarchive.idarchive > partial.idarchive
-                     WHERE partial.idsite IN (" . implode(',', $idSitesOfChunk) . ")
-                       AND partial.name LIKE 'done%.%'
-                       AND partial.value = " . ArchiveWriter::DONE_PARTIAL;
-
-            $rows = Db::fetchAll($sql);
-            $archiveIds = array_merge($archiveIds, array_map('strval', array_column($rows, 'idarchive')));
         }
 
         return $archiveIds;
@@ -530,15 +486,9 @@ class Model
 
         $blobTable = ArchiveTableCreator::getBlobTable($dateStart, false);
 
-        // the older archives of the same name, and the partial archives of its plugins (`<name>.<Plugin>`), which
-        // readers ignore once a newer archive of all their plugins exists
-        // a partial of the same second is older too, as its idarchive is lower
-        $sql = "SELECT idarchive FROM `$numericTable` WHERE idsite = ? AND date1 = ? AND date2 = ? AND period = ?
-                   AND ((name = ? AND ts_archived <= ?) OR (name LIKE ? AND value = " . ArchiveWriter::DONE_PARTIAL . " AND ts_archived <= ?))
-                   AND idarchive < ?";
-        $partialNamePattern = addcslashes($name, '%_\\') . '.%';
+        $sql = "SELECT idarchive FROM `$numericTable` WHERE idsite = ? AND date1 = ? AND date2 = ? AND period = ? AND name = ? AND ts_archived <= ? AND idarchive < ?";
 
-        $idArchives = Db::fetchAll($sql, [$params->getSite()->getId(), $dateStart->getDatetime(), $dateEnd->getDatetime(), $params->getPeriod()->getId(), $name, $tsArchived, $partialNamePattern, $tsArchived, $idArchive]);
+        $idArchives = Db::fetchAll($sql, [$params->getSite()->getId(), $dateStart->getDatetime(), $dateEnd->getDatetime(), $params->getPeriod()->getId(), $name, $tsArchived, $idArchive]);
         $idArchives = array_column($idArchives, 'idarchive');
         if (empty($idArchives)) {
             return;
